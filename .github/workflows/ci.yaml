@@ -101,7 +101,11 @@ jobs:
           node-version: '22'
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
-      - name: Validate the plugin and the marketplace
-        run: |
-          claude plugin validate ./plugins/dua-claude --strict
-          claude plugin validate . --strict || true
+      # --strict is off on purpose. The plugin deliberately carries no version
+      # field: without one the commit SHA is the version.
+      # The validator warns about that, and --strict turns the warning into an
+      # error. Add "version": "0.1.0" and restore --strict at the first release.
+      - name: Validate the plugin manifest
+        run: claude plugin validate ./plugins/dua-claude
+      - name: Validate the marketplace manifest
+        run: claude plugin validate .
