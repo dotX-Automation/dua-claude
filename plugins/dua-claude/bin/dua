@@ -398,10 +398,12 @@ cmd_doctor() {
     local ctarget
     ctarget="$(container_target_file || true)"
     if [[ -n "${ctarget}" ]]; then
-      if [[ "${ctarget}" == "${DUA_CTARGET}" ]]; then
+      if [[ -z "${DUA_CTARGET}" ]]; then
+        cn "target ${ctarget}, from /etc/dua/target (the container carries no compose labels)"
+      elif [[ "${ctarget}" == "${DUA_CTARGET}" ]]; then
         ck "/etc/dua/target agrees: ${ctarget}"
       else
-        cn "/etc/dua/target says ${ctarget}, compose says ${DUA_CTARGET}"
+        cn "/etc/dua/target says ${ctarget}, the compose files say ${DUA_CTARGET}"
       fi
     fi
     local ws_ok

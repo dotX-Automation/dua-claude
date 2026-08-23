@@ -2,9 +2,13 @@
 
 # Offline unit tests for the dua CLI.
 #
-# No Docker daemon is involved: tests/stub/docker replays container records
-# captured from real DUA hosts (flight_stack under VS Code, marco-polo under
-# Compose, go2_stack on a uid 10001 host).
+# No Docker daemon is involved and nothing on the machine is touched:
+# tests/stub/docker replaces the docker client on PATH and replays container
+# records written into a temporary directory. The records reproduce the shapes
+# observed on real hosts: a VS Code container, whose image is renamed and whose
+# compose project is derived from the .devcontainer path, a Compose container,
+# whose project is literally "devcontainer", and a host where the internal
+# user's uid and gid differ from the caller's.
 #
 # Usage: tests/unit/run.sh [-v]
 #
@@ -75,60 +79,10 @@ assert_rc() {
 # Fixture construction
 # --------------------------------------------------------------------------
 
-# make_repo <path> <name> <target>...
-# Builds a DUA project tree with the given targets configured.
-make_repo() {
-  local path="${1}" name="${2}"
-  shift 2
-  mkdir -p "${path}"/{src,logs,config,tools,bin}
-  touch "${path}/bin/dua_setup.sh"
-  local t d
-  for t in "$@"; do
-    d="${path}/docker/container-${t}"
-    mkdir -p "${d}/.devcontainer"
-    cat >"${d}/.devcontainer/docker-compose.yaml" <<EOF
-services:
-  ${name}-${t}:
-    build:
-      context: ../
-      dockerfile: Dockerfile
-      args:
-        - USER_UID=1000
-    image: ${name}:${t}
-    user: neo
-    network_mode: "host"
-    volumes:
-      - ../../../:/home/neo/workspace
-EOF
-    cat >"${d}/Dockerfile" <<EOF
-FROM dotxautomation/dua-foundation:${t}
-# IMAGE SETUP START #
-# dep_one START #
-RUN echo dep_one
-# dep_one END #
-# ${name} START #
-RUN echo ${name}
-# ${name} END #
-# IMAGE SETUP END #
-EOF
-    local f
-    for f in aliases.sh commands.sh ros2.sh bashrc dua_submod.sh dua_subtree.sh; do
-      echo "# ${f}" >"${d}/${f}"
-    done
-  done
-}
-
-# make_pkg <repo> <relative path> <package name>
-make_pkg() {
-  mkdir -p "${1}/${2}"
-  cat >"${1}/${2}/package.xml" <<EOF
-<?xml version="1.0"?>
-<package format="3">
-  <name>${3}</name>
-  <description>${3}</description>
-</package>
-EOF
-}
+# Fixture repositories and packages come from the shared builders, so the
+# offline suite and the container suite exercise the same layout.
+# shellcheck source=../fixtures/fixtures.sh
+source "${ROOT}/tests/fixtures/fixtures.sh"
 
 # new_fixture -> prints a fresh fixture dir
 new_fixture() {
@@ -193,13 +147,13 @@ assert_contains "${OUT}" "not inside a DUA project" "explains why"
 
 scenario "single unit, container running, from the repo root"
 fix="$(new_fixture)"
-repo="${TMP}/flight_stack"
-make_repo "${repo}" flight_stack x86-cudev x86-dev
-add_image "${fix}" "flight_stack:x86-cudev"
+repo="${TMP}/unit-one"
+make_repo "${repo}" unit-one x86-cudev x86-dev
+add_image "${fix}" "unit-one:x86-cudev"
 add_container "${fix}" 816eb445df3b \
-  "container-x86-cudev_devcontainer-flight_stack-x86-cudev-1" \
+  "container-x86-cudev_devcontainer-unit-one-x86-cudev-1" \
   "vsc-container-x86-cudev-dc6c14dd-uid" running \
-  "flight_stack-x86-cudev" "container-x86-cudev_devcontainer" \
+  "unit-one-x86-cudev" "container-x86-cudev_devcontainer" \
   "${repo}/docker/container-x86-cudev" "${repo}"
 run_dua "${fix}" "${repo}" ctx
 assert_rc "${RC}" 0 "ctx succeeds"
@@ -210,44 +164,44 @@ assert_contains "${OUT}" "->  /home/neo/workspace" "cwd maps to the workspace ro
 assert_contains "${OUT}" "x86-cudev (built)" "marks the built image"
 run_dua "${fix}" "${repo}" ctx --json
 assert_contains "${OUT}" '"strategy": "mount"' "json carries the strategy"
-assert_contains "${OUT}" '"units": "dep_one,flight_stack"' "parses units from the Dockerfile"
+assert_contains "${OUT}" '"units": "dep_one,unit-one"' "parses units from the Dockerfile"
 assert_not_contains "${OUT}" '"units": "IMAGE' "drops the IMAGE SETUP marker"
 
 scenario "same project, from a subdirectory"
-mkdir -p "${repo}/src/px4_msgs/include"
-run_dua "${fix}" "${repo}/src/px4_msgs/include" ctx
-assert_contains "${OUT}" "->  /home/neo/workspace/src/px4_msgs/include" "cwd maps through the mount"
+mkdir -p "${repo}/src/sample_pkg/include"
+run_dua "${fix}" "${repo}/src/sample_pkg/include" ctx
+assert_contains "${OUT}" "->  /home/neo/workspace/src/sample_pkg/include" "cwd maps through the mount"
 
 scenario "nested unit inside a macro-project"
 fix="$(new_fixture)"
-macro="${TMP}/marco-polo"
-make_repo "${macro}" marco-polo x86-cudev
+macro="${TMP}/macro-one"
+make_repo "${macro}" macro-one x86-cudev
 mkdir -p "${macro}/src"
-make_repo "${macro}/src/go2_stack" go2_stack x86-cudev
-add_image "${fix}" "marco-polo:x86-cudev"
-add_container "${fix}" 7d2d43a72b5c "devcontainer-marco-polo-x86-cudev-1" \
-  "marco-polo:x86-cudev" running "marco-polo-x86-cudev" "devcontainer" "" "${macro}"
-run_dua "${fix}" "${macro}/src/go2_stack" ctx
+make_repo "${macro}/src/nested_unit" nested_unit x86-cudev
+add_image "${fix}" "macro-one:x86-cudev"
+add_container "${fix}" 7d2d43a72b5c "devcontainer-macro-one-x86-cudev-1" \
+  "macro-one:x86-cudev" running "macro-one-x86-cudev" "devcontainer" "" "${macro}"
+run_dua "${fix}" "${macro}/src/nested_unit" ctx
 assert_rc "${RC}" 0 "ctx succeeds inside the nested unit"
 assert_contains "${OUT}" "container      running" "resolves the macro-project container"
-assert_contains "${OUT}" "devcontainer-marco-polo-x86-cudev-1" "picks the owning container"
-assert_contains "${OUT}" "->  /home/neo/workspace/src/go2_stack" "maps the nested path"
+assert_contains "${OUT}" "devcontainer-macro-one-x86-cudev-1" "picks the owning container"
+assert_contains "${OUT}" "->  /home/neo/workspace/src/nested_unit" "maps the nested path"
 assert_contains "${OUT}" "role           unit nested in ${macro}" "reports the nested role"
 
 scenario "two DUA containers on one host"
 fix="$(new_fixture)"
 r1="${TMP}/h2_flight"
 r2="${TMP}/h2_marco"
-make_repo "${r1}" flight_stack x86-cudev
-make_repo "${r2}" marco-polo x86-cudev
+make_repo "${r1}" unit-one x86-cudev
+make_repo "${r2}" macro-one x86-cudev
 add_container "${fix}" aaaaaaaaaaaa "vsc-flight" "vsc-x-uid" running \
-  "flight_stack-x86-cudev" "container-x86-cudev_devcontainer" "" "${r1}"
-add_container "${fix}" bbbbbbbbbbbb "devcontainer-marco-polo-x86-cudev-1" \
-  "marco-polo:x86-cudev" running "marco-polo-x86-cudev" "devcontainer" "" "${r2}"
+  "unit-one-x86-cudev" "container-x86-cudev_devcontainer" "" "${r1}"
+add_container "${fix}" bbbbbbbbbbbb "devcontainer-macro-one-x86-cudev-1" \
+  "macro-one:x86-cudev" running "macro-one-x86-cudev" "devcontainer" "" "${r2}"
 run_dua "${fix}" "${r1}" ctx
-assert_contains "${OUT}" "aaaaaaaaaaaa" "picks the flight_stack container"
+assert_contains "${OUT}" "aaaaaaaaaaaa" "picks the unit-one container"
 run_dua "${fix}" "${r2}" ctx
-assert_contains "${OUT}" "bbbbbbbbbbbb" "picks the marco-polo container"
+assert_contains "${OUT}" "bbbbbbbbbbbb" "picks the macro-one container"
 
 scenario "two containers bound to the same root"
 fix="$(new_fixture)"
@@ -293,6 +247,35 @@ run_dua "${fix}" "${repo}" ctx
 assert_contains "${OUT}" "absent (image built)" "distinguishes a built image"
 run_dua "${fix}" "${repo}" exec -- true
 assert_contains "${OUT}" "no container is running" "exec explains the situation"
+
+scenario "target inference when the container carries no labels"
+fix="$(new_fixture)"
+repo="${TMP}/nolabel"
+make_repo "${repo}" nolabel x86-cudev
+add_container "${fix}" 999999999999 "hand-started" "someimage:latest" running "" "" "" "${repo}"
+run_dua "${fix}" "${repo}" ctx
+assert_contains "${OUT}" "target         x86-cudev" "falls back to the only configured target"
+assert_not_contains "${OUT}" "target         latest" "never takes an unrelated image tag as the target"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" exec -- true
+assert_contains "$(calls "${fix}")" "__dua_stamp='v3:" "the stamp is versioned and target independent"
+# the stamp must still track config edits when the target is uncertain
+stamp_a="$(grep -o "__dua_stamp='[^']*'" "${fix}/calls.log" | head -1)"
+sleep 1
+touch "${repo}/docker/container-x86-cudev/commands.sh"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" exec -- true
+stamp_b="$(grep -o "__dua_stamp='[^']*'" "${fix}/calls.log" | head -1)"
+if [[ "${stamp_a}" != "${stamp_b}" ]]; then ok "editing a config file changes the stamp"; else no "editing a config file changes the stamp" "${stamp_a}"; fi
+
+scenario "a multi-target repository leaves an unknown target unknown"
+fix="$(new_fixture)"
+repo="${TMP}/multi"
+make_repo "${repo}" multi x86-cudev x86-dev jetson6
+add_container "${fix}" aaaabbbbcccc "hand-started" "someimage:latest" running "" "" "" "${repo}"
+run_dua "${fix}" "${repo}" ctx
+assert_not_contains "${OUT}" "target         latest" "no bogus target"
+assert_contains "${OUT}" "container      running" "but the container still resolves"
 
 scenario "compose service label fallback"
 fix="$(new_fixture)"
@@ -357,7 +340,7 @@ assert_contains "${log}" 'DUA_CMD="$__dua_cmd"' "restores it afterwards"
 scenario "snapshot recipe version"
 : >"${fix}/calls.log"
 run_dua "${fix}" "${repo}" exec -- true
-assert_contains "$(calls "${fix}")" "__dua_stamp='v2:" "the stamp carries the recipe version"
+assert_contains "$(calls "${fix}")" "__dua_stamp='v3:" "the stamp carries the recipe version"
 run_dua "${fix}" "${repo}" --time exec -- true
 assert_contains "${OUT}" "[dua] resolve" "--time reports per-phase timings"
 

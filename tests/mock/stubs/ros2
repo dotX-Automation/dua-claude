@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Recording stub for ros2. pkg create really creates a minimal package, so the
+# plugin's pkg workflow can be checked end to end.
+set -uo pipefail
+mkdir -p /tmp/mock
+printf '%s\n' "$*" >>/tmp/mock/ros2.log
+
+if [[ "${1-}" == "pkg" && "${2-}" == "create" ]]; then
+  name=""
+  dest="src"
+  prev=""
+  for a in "$@"; do
+    [[ "${prev}" == "--destination-directory" ]] && dest="${a}"
+    prev="${a}"
+    name="${a}"
+  done
+  mkdir -p "${dest}/${name}"
+  printf '<?xml version="1.0"?>\n<package format="3">\n  <name>%s</name>\n</package>\n' \
+    "${name}" >"${dest}/${name}/package.xml"
+  echo "going to create a new package"
+  echo "package name: ${name}"
+  exit 0
+fi
+echo "ros2 $*"
+exit 0

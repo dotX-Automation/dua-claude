@@ -39,7 +39,7 @@ DUA_EXEC_MODE="${DUA_EXEC_MODE:-snap}"
 # Recipe version, part of the invalidation key: bumping it discards every
 # snapshot produced by an older version of this file, which is what makes a
 # plugin update safe.
-readonly DUA_SNAPSHOT_VERSION=2
+readonly DUA_SNAPSHOT_VERSION=3
 
 # Config files bind-mounted into the container whose contents end up in the
 # snapshot. A change to any of them invalidates it.
@@ -48,14 +48,22 @@ DUA_SNAPSHOT_INPUTS=(aliases.sh commands.sh ros2.sh bashrc dua_submod.sh dua_sub
 # Invalidation key: container identity, boot, mounted config mtimes, and a
 # generation counter bumped by commands that change the workspace environment
 # (a build adds packages to AMENT_PREFIX_PATH).
+#
+# The mtimes cover every configured target rather than the resolved one, so
+# invalidation keeps working when the target cannot be determined: a container
+# started outside Compose carries neither the service label nor a meaningful
+# image tag. Editing an unused target's files invalidates too, which costs one
+# snapshot rebuild and never misses a real change.
 snapshot_stamp() {
-  local root="${1}" target="${2}" f p mt="0" gen
-  for f in "${DUA_SNAPSHOT_INPUTS[@]}"; do
-    p="${root}/docker/container-${target}/${f}"
-    [[ -f "${p}" ]] || continue
-    local m
-    m="$(stat -c '%Y' "${p}" 2>/dev/null || stat -f '%m' "${p}" 2>/dev/null || echo 0)"
-    if [[ "${m}" -gt "${mt}" ]]; then mt="${m}"; fi
+  local root="${1}" d f p mt="0" gen m
+  for d in "${root}"/docker/container-*; do
+    [[ -d "${d}" ]] || continue
+    for f in "${DUA_SNAPSHOT_INPUTS[@]}"; do
+      p="${d}/${f}"
+      [[ -f "${p}" ]] || continue
+      m="$(stat -c '%Y' "${p}" 2>/dev/null || stat -f '%m' "${p}" 2>/dev/null || echo 0)"
+      if [[ "${m}" -gt "${mt}" ]]; then mt="${m}"; fi
+    done
   done
   gen="$(state_get "${root}" gen)"
   printf 'v%s:%s:%s:%s:%s' \
@@ -136,7 +144,7 @@ dua_exec_in() {
   local payload rc=0
   case "${DUA_EXEC_MODE}" in
   snap)
-    payload="$(_snapshot_prelude "$(snapshot_stamp "${DUA_REPO_ROOT}" "${DUA_CTARGET}")")"
+    payload="$(_snapshot_prelude "$(snapshot_stamp "${DUA_REPO_ROOT}")")"
     if [[ -n "${tmo}" ]]; then
       # Re-source inside the subshell so functions and aliases survive.
       payload+=$'\n'"timeout ${tmo} bash -c '__c=\"\$DUA_CMD\"; shopt -s expand_aliases; . ${DUA_CC_DIR}/env.sh; DUA_CMD=\"\$__c\"; eval \"\$DUA_CMD\"'"
@@ -192,7 +200,7 @@ container_target_file() {
 # Whether the snapshot inside the container is current.
 snapshot_state() {
   local want stored
-  want="$(snapshot_stamp "${DUA_REPO_ROOT}" "${DUA_CTARGET}")"
+  want="$(snapshot_stamp "${DUA_REPO_ROOT}")"
   stored="$(dk exec -i -u "${DUA_USER}" "${DUA_CID}" cat "${DUA_CC_DIR}/stamp" 2>/dev/null || true)"
   if [[ -z "${stored}" ]]; then
     printf 'absent'

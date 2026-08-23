@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: shellcheck and manifests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: shellcheck
+        run: |
+          shellcheck -S warning \
+            plugins/dua-claude/bin/dua \
+            plugins/dua-claude/lib/*.sh \
+            tests/stub/docker \
+            tests/unit/run.sh \
+            tests/smoke/on-host.sh \
+            tests/fixtures/fixtures.sh \
+            tests/mock/build.sh \
+            tests/mock/stubs/colcon \
+            tests/mock/stubs/ros2 \
+            tests/bats/helper.bash \
+            tests/run-all.sh
+
+      - name: Manifests are valid JSON
+        run: |
+          python3 -c 'import json; json.load(open(".claude-plugin/marketplace.json"))'
+          python3 -c 'import json; json.load(open("plugins/dua-claude/.claude-plugin/plugin.json"))'
+
+  offline:
+    name: offline suite
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the offline suite
+        run: tests/unit/run.sh
+
+  container:
+    name: container suite (pinned template)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pinned dua-template ref
+        id: ref
+        run: echo "sha=$(cat tests/mock/TEMPLATE_REF)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out dua-template
+        uses: actions/checkout@v4
+        with:
+          repository: dotX-Automation/dua-template
+          ref: ${{ steps.ref.outputs.sha }}
+          path: .template
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bats
+
+      - name: Build the mock container
+        run: |
+          tests/mock/build.sh -s .template
+          tests/mock/build.sh -s .template -t dua-claude-mock:mismatch -u 4321 -g 5678
+
+      - name: Run the container suite
+        run: bats --print-output-on-failure tests/bats
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Container suite"
+            echo
+            echo "dua-template pinned at \`${{ steps.ref.outputs.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  plugin-validate:
+    name: claude plugin validate
+    runs-on: ubuntu-24.04
+    # Advisory: the validator ships with Claude Code and its schema moves faster
+    # than this repository, so a failure here reports rather than blocks.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate the plugin and the marketplace
+        run: |
+          claude plugin validate ./plugins/dua-claude --strict
+          claude plugin validate . --strict || true

@@ -1,0 +1,81 @@
+name: Nightly template check
+
+# The plugin depends on details of dua-template that are not part of any
+# contract: the interactive guard in bashrc, ros2init sourcing the workspace
+# install tree, the names of the mounted configuration files. This job rebuilds
+# the mock against the template's current master every night, so a change that
+# breaks the environment snapshot surfaces here rather than on a developer's
+# machine.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: dua-template ref to test
+        required: false
+        default: master
+
+permissions:
+  contents: read
+
+jobs:
+  template:
+    name: container suite (template ${{ github.event.inputs.ref || 'master' }})
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out dua-template
+        uses: actions/checkout@v4
+        with:
+          repository: dotX-Automation/dua-template
+          ref: ${{ github.event.inputs.ref || 'master' }}
+          path: .template
+
+      - name: Report what is being tested
+        id: what
+        run: |
+          pinned="$(cat tests/mock/TEMPLATE_REF)"
+          current="$(git -C .template rev-parse HEAD)"
+          echo "pinned=${pinned}" >> "$GITHUB_OUTPUT"
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          if [ "${pinned}" = "${current}" ]; then
+            echo "dua-template has not moved since the pin"
+          else
+            echo "dua-template moved: ${pinned} -> ${current}"
+            git -C .template log --oneline "${pinned}..${current}" -- bin/dua-templates/context || true
+          fi
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bats
+
+      - name: Build the mock container
+        run: |
+          tests/mock/build.sh -s .template
+          tests/mock/build.sh -s .template -t dua-claude-mock:mismatch -u 4321 -g 5678
+
+      - name: Run the container suite
+        run: bats --print-output-on-failure tests/bats
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Nightly template check"
+            echo
+            echo "| | commit |"
+            echo "|---|---|"
+            echo "| pinned | \`${{ steps.what.outputs.pinned }}\` |"
+            echo "| tested | \`${{ steps.what.outputs.current }}\` |"
+            echo
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "The plugin still works against the template's current state."
+            else
+              echo "**The plugin no longer works against the template's current state.**"
+              echo "Check the context files under \`bin/dua-templates/context/\` for changes"
+              echo "to the interactive guard in \`bashrc\`, to \`ros2init\`, or to the set of"
+              echo "mounted configuration files."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

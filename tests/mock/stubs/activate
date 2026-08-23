@@ -1,0 +1,3 @@
+# Stub of the DUA Python virtual environment activation script.
+export VIRTUAL_ENV=/opt/dua-venv
+export PATH="/opt/dua-venv/bin:${PATH}"

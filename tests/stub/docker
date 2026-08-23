@@ -2,7 +2,7 @@
 
 # Docker stub for offline unit tests.
 #
-# Replays canned container records captured from real DUA hosts. It understands
+# Replays canned container records written by the test suite. It understands
 # only the calls the dua CLI makes, and records every invocation in
 # $DUA_STUB_LOG so tests can assert on what was called.
 #

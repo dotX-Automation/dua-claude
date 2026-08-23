@@ -185,7 +185,21 @@ _set_container_from_record() {
     fi
   done < <(list_targets "${DUA_REPO_ROOT}")
   if [[ -z "${DUA_CTARGET}" && "${DUA_CIMAGE}" == *:* ]]; then
-    DUA_CTARGET="${DUA_CIMAGE##*:}"
+    # The image tag is only meaningful when it names a target this repository
+    # actually configures. VS Code renames images to vsc-<folder>-<hash>-uid,
+    # and a hand-run container can carry any tag at all.
+    local tag="${DUA_CIMAGE##*:}"
+    if [[ -d "${DUA_REPO_ROOT}/docker/container-${tag}" ]]; then
+      DUA_CTARGET="${tag}"
+    fi
+  fi
+  if [[ -z "${DUA_CTARGET}" ]]; then
+    # A repository runs one target at a time, so a single configured target is
+    # unambiguous. Otherwise the target stays unknown and callers that need it
+    # read /etc/dua/target from the container.
+    local -a _targets=()
+    mapfile -t _targets < <(list_targets "${DUA_REPO_ROOT}")
+    if [[ ${#_targets[@]} -eq 1 ]]; then DUA_CTARGET="${_targets[0]}"; fi
   fi
   return 0
 }

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Recording stub for colcon. Appends its argv to /tmp/mock/colcon.log so tests
+# can assert on the exact command line the plugin produced, and reproduces the
+# one real quirk that bit us: test-result rejects package selection.
+set -uo pipefail
+mkdir -p /tmp/mock
+printf '%s\n' "$*" >>/tmp/mock/colcon.log
+
+verb="${1-}"
+case "${verb}" in
+test-result)
+  for a in "$@"; do
+    if [[ "${a}" == "--packages-select" || "${a}" == "--packages-up-to" ]]; then
+      echo "usage: colcon [-h] ..." >&2
+      echo "colcon: error: unrecognized arguments: ${a}" >&2
+      exit 2
+    fi
+  done
+  echo "Summary: 0 tests, 0 errors, 0 failures, 0 skipped"
+  ;;
+build | test)
+  echo "Starting >>> mock_pkg"
+  echo "Finished <<< mock_pkg [0.1s]"
+  echo "Summary: 1 package finished [0.2s]"
+  ;;
+*) echo "colcon ${verb}: nothing to do" ;;
+esac
+exit "$(cat /tmp/mock/colcon.rc 2>/dev/null || echo 0)"

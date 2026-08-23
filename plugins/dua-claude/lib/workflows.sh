@@ -309,7 +309,7 @@ dua_bg_start() {
   script="$(
     printf 'mkdir -p %s\n' "${DUA_BG_DIR}"
     printf 'echo $$ > %s\n' "$(_bg_pid "${name}")"
-    _snapshot_prelude "$(snapshot_stamp "${DUA_REPO_ROOT}" "${DUA_CTARGET}")"
+    _snapshot_prelude "$(snapshot_stamp "${DUA_REPO_ROOT}")"
     printf 'cd %s\n' "${ccwd}"
     printf '%s\n' "${cmd}"
   )"
