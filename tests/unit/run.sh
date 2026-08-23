@@ -258,15 +258,28 @@ assert_contains "${OUT}" "target         x86-cudev" "falls back to the only conf
 assert_not_contains "${OUT}" "target         latest" "never takes an unrelated image tag as the target"
 : >"${fix}/calls.log"
 run_dua "${fix}" "${repo}" exec -- true
-assert_contains "$(calls "${fix}")" "__dua_stamp='v3:" "the stamp is versioned and target independent"
-# the stamp must still track config edits when the target is uncertain
+assert_contains "$(calls "${fix}")" "__dua_stamp='v4:" "the stamp is versioned and target independent"
+# The stamp must track config edits even when the target is uncertain, and it
+# must do so without depending on timestamps: everything below happens well
+# within one second, which is the granularity of stat.
 stamp_a="$(grep -o "__dua_stamp='[^']*'" "${fix}/calls.log" | head -1)"
-sleep 1
-touch "${repo}/docker/container-x86-cudev/commands.sh"
+echo '# an edit' >>"${repo}/docker/container-x86-cudev/commands.sh"
 : >"${fix}/calls.log"
 run_dua "${fix}" "${repo}" exec -- true
 stamp_b="$(grep -o "__dua_stamp='[^']*'" "${fix}/calls.log" | head -1)"
-if [[ "${stamp_a}" != "${stamp_b}" ]]; then ok "editing a config file changes the stamp"; else no "editing a config file changes the stamp" "${stamp_a}"; fi
+if [[ "${stamp_a}" != "${stamp_b}" ]]; then ok "editing a config file changes the stamp immediately"; else no "editing a config file changes the stamp immediately" "${stamp_a}"; fi
+# Touching without changing the contents must not force a rebuild.
+touch "${repo}/docker/container-x86-cudev/commands.sh"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" exec -- true
+stamp_c="$(grep -o "__dua_stamp='[^']*'" "${fix}/calls.log" | head -1)"
+if [[ "${stamp_b}" == "${stamp_c}" ]]; then ok "touching a config file alone does not"; else no "touching a config file alone does not"; fi
+# Reverting an edit restores the previous stamp.
+sed -i '$d' "${repo}/docker/container-x86-cudev/commands.sh"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" exec -- true
+stamp_d="$(grep -o "__dua_stamp='[^']*'" "${fix}/calls.log" | head -1)"
+if [[ "${stamp_a}" == "${stamp_d}" ]]; then ok "reverting an edit restores the stamp"; else no "reverting an edit restores the stamp"; fi
 
 scenario "a multi-target repository leaves an unknown target unknown"
 fix="$(new_fixture)"
@@ -340,7 +353,7 @@ assert_contains "${log}" 'DUA_CMD="$__dua_cmd"' "restores it afterwards"
 scenario "snapshot recipe version"
 : >"${fix}/calls.log"
 run_dua "${fix}" "${repo}" exec -- true
-assert_contains "$(calls "${fix}")" "__dua_stamp='v3:" "the stamp carries the recipe version"
+assert_contains "$(calls "${fix}")" "__dua_stamp='v4:" "the stamp carries the recipe version"
 run_dua "${fix}" "${repo}" --time exec -- true
 assert_contains "${OUT}" "[dua] resolve" "--time reports per-phase timings"
 

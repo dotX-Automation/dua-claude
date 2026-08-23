@@ -154,10 +154,14 @@ main() {
   local target
   target="$("${DUA}" ctx --json | sed -n 's/.*"target": "\([^"]*\)".*/\1/p' | head -1)"
   check "snapshot is fresh" "fresh" "${DUA}" ctx
-  touch "${root}/docker/container-${target}/commands.sh"
-  check "touching commands.sh invalidates it" "stale" "${DUA}" ctx
+  local cfg="${root}/docker/container-${target}/commands.sh"
+  cp "${cfg}" "${cfg}.dua-smoke-backup"
+  echo '# dua-claude smoke marker' >>"${cfg}"
+  check "editing commands.sh invalidates it" "stale" "${DUA}" ctx
   "${DUA}" exec -- true >/dev/null 2>&1
   check "the next exec refreshes it" "fresh" "${DUA}" ctx
+  mv "${cfg}.dua-smoke-backup" "${cfg}"
+  check "reverting the edit restores the earlier snapshot" "fresh" "${DUA}" ctx
 
   sec "resolution cache"
   printf '  with cache:\n'

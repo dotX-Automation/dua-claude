@@ -39,35 +39,58 @@ DUA_EXEC_MODE="${DUA_EXEC_MODE:-snap}"
 # Recipe version, part of the invalidation key: bumping it discards every
 # snapshot produced by an older version of this file, which is what makes a
 # plugin update safe.
-readonly DUA_SNAPSHOT_VERSION=3
+readonly DUA_SNAPSHOT_VERSION=4
 
 # Config files bind-mounted into the container whose contents end up in the
 # snapshot. A change to any of them invalidates it.
 DUA_SNAPSHOT_INPUTS=(aliases.sh commands.sh ros2.sh bashrc dua_submod.sh dua_subtree.sh)
 
-# Invalidation key: container identity, boot, mounted config mtimes, and a
-# generation counter bumped by commands that change the workspace environment
-# (a build adds packages to AMENT_PREFIX_PATH).
+# Digest of every mounted configuration file, across every configured target.
 #
-# The mtimes cover every configured target rather than the resolved one, so
-# invalidation keeps working when the target cannot be determined: a container
-# started outside Compose carries neither the service label nor a meaningful
-# image tag. Editing an unused target's files invalidates too, which costs one
-# snapshot rebuild and never misses a real change.
-snapshot_stamp() {
-  local root="${1}" d f p mt="0" gen m
+# Contents rather than timestamps: stat has one-second granularity, so an edit
+# made in the same second as the snapshot was built would go unnoticed, which
+# on a fast machine is a real possibility rather than a theoretical one. Using
+# the contents also means reverting an edit restores the previous snapshot
+# instead of forcing a pointless rebuild.
+#
+# All targets are covered, not just the resolved one, so invalidation keeps
+# working when the target cannot be determined: a container started outside
+# Compose carries neither the service label nor a meaningful image tag.
+config_digest() {
+  local root="${1}" d f
+  local -a files=()
   for d in "${root}"/docker/container-*; do
     [[ -d "${d}" ]] || continue
     for f in "${DUA_SNAPSHOT_INPUTS[@]}"; do
-      p="${d}/${f}"
-      [[ -f "${p}" ]] || continue
-      m="$(stat -c '%Y' "${p}" 2>/dev/null || stat -f '%m' "${p}" 2>/dev/null || echo 0)"
-      if [[ "${m}" -gt "${mt}" ]]; then mt="${m}"; fi
+      [[ -f "${d}/${f}" ]] && files+=("${d}/${f}")
     done
   done
+  # cksum with no arguments would read stdin and hang.
+  if [[ ${#files[@]} -eq 0 ]]; then
+    printf '0'
+    return 0
+  fi
+  # One fork for all of them: cat-per-file and stat-per-file both cost about
+  # 20 ms, which is a fifth of a whole command.
+  local out sum=0 c sz rest
+  out="$(cksum "${files[@]}")"
+  while read -r c sz rest; do
+    [[ -n "${c}" ]] || continue
+    sum=$(((sum * 31 + c + sz) % 4294967296))
+  done <<<"${out}"
+  printf '%s' "${sum}"
+}
+
+# Invalidation key: the snapshot recipe version, container identity, container
+# boot, the configuration digest, and a generation counter bumped by commands
+# that change the workspace environment (a build adds packages to
+# AMENT_PREFIX_PATH).
+snapshot_stamp() {
+  local root="${1}" gen
   gen="$(state_get "${root}" gen)"
   printf 'v%s:%s:%s:%s:%s' \
-    "${DUA_SNAPSHOT_VERSION}" "${DUA_CID:0:12}" "${DUA_CSTARTED}" "${mt}" "${gen:-0}"
+    "${DUA_SNAPSHOT_VERSION}" "${DUA_CID:0:12}" "${DUA_CSTARTED}" \
+    "$(config_digest "${root}")" "${gen:-0}"
 }
 
 # Invalidate the snapshot by bumping the generation counter.

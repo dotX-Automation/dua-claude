@@ -107,6 +107,8 @@ teardown() { stop_mocks; }
 }
 
 @test "editing a mounted config file invalidates the snapshot" {
+  # Everything here happens inside one second, which is the granularity of
+  # stat: the invalidation key must be content based, not timestamp based.
   dua_in "${PROJECT}" exec -- true
   dua_in "${PROJECT}" ctx
   [[ "${output}" == *"snapshot       fresh"* ]]
@@ -116,6 +118,22 @@ teardown() { stop_mocks; }
   dua_in "${PROJECT}" exec -- true
   dua_in "${PROJECT}" ctx
   [[ "${output}" == *"snapshot       fresh"* ]]
+}
+
+@test "touching a config file without changing it does not invalidate" {
+  dua_in "${PROJECT}" exec -- true
+  touch "${PROJECT}/docker/container-x86-cudev/commands.sh"
+  dua_in "${PROJECT}" ctx
+  [[ "${output}" == *"snapshot       fresh"* ]]
+}
+
+@test "an edit to any configured target invalidates the snapshot" {
+  # The resolved target is not always knowable, so the digest covers them all.
+  make_repo "${PROJECT}" wfproj x86-cudev x86-dev
+  dua_in "${PROJECT}" exec -- true
+  echo '# unrelated target' >>"${PROJECT}/docker/container-x86-dev/aliases.sh"
+  dua_in "${PROJECT}" ctx
+  [[ "${output}" == *"snapshot       stale"* ]]
 }
 
 @test "the host and the container see the same files" {
