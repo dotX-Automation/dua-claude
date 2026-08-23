@@ -118,6 +118,18 @@ EOF
   done
 }
 
+# make_pkg <repo> <relative path> <package name>
+make_pkg() {
+  mkdir -p "${1}/${2}"
+  cat >"${1}/${2}/package.xml" <<EOF
+<?xml version="1.0"?>
+<package format="3">
+  <name>${3}</name>
+  <description>${3}</description>
+</package>
+EOF
+}
+
 # new_fixture -> prints a fresh fixture dir
 new_fixture() {
   local d
@@ -388,6 +400,191 @@ run_dua "${fix}" "${repo}" up
 assert_contains "$(calls "${fix}")" "compose up -d" "brings up the only built target"
 run_dua "${fix}" "${repo}" ctx --json
 assert_contains "${OUT}" '"name": "jetson6"' "lists every configured target"
+
+scenario "build: workspace-wide"
+fix="$(new_fixture)"
+repo="${TMP}/bld"
+make_repo "${repo}" bld x86-cudev
+make_pkg "${repo}" src/unit_a/pkg_a1 pkg_a1
+make_pkg "${repo}" src/unit_a/pkg_a2 pkg_a2
+make_pkg "${repo}" src/pkg_b pkg_b
+add_container "${fix}" 444444444444 "devcontainer-bld-x86-cudev-1" \
+  "bld:x86-cudev" running "bld-x86-cudev" "devcontainer" "" "${repo}"
+run_dua "${fix}" "${repo}" build
+assert_rc "${RC}" 0 "build succeeds"
+log="$(calls "${fix}")"
+assert_contains "${log}" "colcon build --symlink-install" "builds with symlink install"
+assert_not_contains "${log}" "--continue-on-error" "stops at the first failure by default"
+assert_contains "${log}" "--event-handlers status- desktop_notification-" "quiet by default"
+assert_not_contains "${log}" "console_direct+" "no full stream unless asked"
+assert_contains "${log}" "'-DCMAKE_EXPORT_COMPILE_COMMANDS=On'" "exports compile_commands.json"
+assert_not_contains "${log}" "RelWithDebInfo" "does not force a build type"
+assert_contains "${log}" "-w /home/neo/workspace " "runs at the workspace root"
+assert_not_contains "${log}" "--packages-select" "no selection at the workspace root"
+assert_not_contains "${log}" "install/setup.sh" "no extra underlay sourcing"
+if compgen -G "${repo}/logs/cc/*-build.log" >/dev/null; then ok "writes a log under logs/cc"; else no "writes a log under logs/cc"; fi
+
+scenario "build: package inference and selection"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}/src/unit_a" build
+log="$(calls "${fix}")"
+assert_contains "${log}" "--packages-select pkg_a1 pkg_a2" "infers both packages of the unit"
+assert_not_contains "${log}" "install/setup.sh" "no extra sourcing: ros2init already did it"
+assert_contains "${OUT}" "building the packages found here" "says what it inferred"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}/src/unit_a/pkg_a2" build
+assert_contains "$(calls "${fix}")" "--packages-select pkg_a2" "infers a single package"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}/src/unit_a" build --all
+assert_not_contains "$(calls "${fix}")" "--packages-select" "--all overrides inference"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" build pkg_b
+assert_contains "$(calls "${fix}")" "--packages-select pkg_b" "explicit packages win"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" build --debug
+log="$(calls "${fix}")"
+assert_contains "${log}" "'-DCMAKE_BUILD_TYPE=Debug'" "--debug forces the Debug build type"
+assert_contains "${log}" "--cmake-force-configure" "and forces a reconfigure so it takes effect"
+assert_contains "${OUT}" "unconditionally" "and warns that CMakeLists can override it"
+assert_contains "${log}" "'-DCMAKE_EXPORT_COMPILE_COMMANDS=On'" "and still exports compile commands"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" build -v
+assert_contains "$(calls "${fix}")" "console_direct+" "-v streams everything"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" build --keep-going
+assert_contains "$(calls "${fix}")" "--continue-on-error" "--keep-going opts out of stopping"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" build --up-to pkg_b
+assert_contains "$(calls "${fix}")" "--packages-up-to pkg_b" "--up-to switches the selection mode"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" build --no-compile-commands
+assert_not_contains "$(calls "${fix}")" "ament-cmake-args" "--no-compile-commands drops the cmake args entirely"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" build --clean pkg_b
+log="$(calls "${fix}")"
+assert_contains "${log}" "rm -rf build/pkg_b install/pkg_b" "--clean with packages removes only theirs"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" build --clean --all
+assert_contains "$(calls "${fix}")" "rm -rf build install log" "--clean --all purges the workspace"
+
+scenario "build: snapshot invalidation"
+gen_before="$(cat "${fix}/state/repos/"*.gen 2>/dev/null || echo 0)"
+run_dua "${fix}" "${repo}" build
+gen_after="$(cat "${fix}/state/repos/"*.gen 2>/dev/null || echo 0)"
+if [[ "${gen_after}" -gt "${gen_before}" ]]; then ok "a successful build invalidates the snapshot"; else no "a successful build invalidates the snapshot" "gen ${gen_before} -> ${gen_after}"; fi
+DUA_STUB_EXEC_RC=1 run_dua "${fix}" "${repo}" build
+assert_rc "${RC}" 1 "a failed build returns non-zero"
+assert_contains "${OUT}" "latest_build" "and points at the per-package logs"
+
+scenario "test"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" test
+log="$(calls "${fix}")"
+assert_contains "${log}" "colcon test --return-code-on-test-failure" "runs colcon test"
+assert_contains "${log}" "colcon test-result --all --verbose" "always prints results"
+assert_not_contains "${log}" "test-result --all --verbose --packages-select" "never selects packages on test-result"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}/src/pkg_b" test
+log="$(calls "${fix}")"
+assert_contains "${log}" "colcon test --return-code-on-test-failure --event-handlers status- desktop_notification- --packages-select pkg_b" "selects on colcon test only"
+assert_contains "${log}" "test-result --test-result-base build/pkg_b" "narrows results by result base instead"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" test --up-to pkg_b
+assert_contains "$(calls "${fix}")" "--packages-up-to pkg_b" "test supports --up-to too"
+
+scenario "run under a deadline"
+: >"${fix}/calls.log"
+DUA_STUB_EXEC_RC=124 run_dua "${fix}" "${repo}" run --for 5s -- ros2 launch pkg a.launch.py
+assert_rc "${RC}" 0 "a reached deadline is not a failure"
+assert_contains "${OUT}" "deadline reached" "and says so"
+assert_contains "$(calls "${fix}")" "timeout 5s" "applies the deadline"
+run_dua "${fix}" "${repo}" run -- something
+assert_rc "${RC}" 2 "run without a deadline is refused"
+
+scenario "background processes"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" bg start talker -- ros2 run demo_nodes_cpp talker
+assert_rc "${RC}" 0 "bg start succeeds"
+log="$(calls "${fix}")"
+assert_contains "${log}" "cat > /tmp/dua-cc/bg/talker.sh" "stages the script in the container"
+assert_contains "${log}" "setsid bash /tmp/dua-cc/bg/talker.sh" "runs it under setsid"
+assert_contains "${log}" "/home/neo/workspace/logs/cc/bg-talker.log" "logs where the host can read it"
+assert_contains "${log}" "exec -d" "detaches"
+staged="$(cat "${fix}/bg/talker.sh" 2>/dev/null)"
+assert_contains "${staged}" 'echo $$ > /tmp/dua-cc/bg/talker.pid' "the script records its own pid"
+assert_contains "${staged}" "ros2 run demo_nodes_cpp talker" "and carries the command"
+assert_contains "${staged}" "dua-cc/env.sh" "with the DUA environment"
+run_dua "${fix}" "${repo}" bg status talker
+assert_contains "${OUT}" "running" "status reports it running"
+run_dua "${fix}" "${repo}" bg list
+assert_contains "${OUT}" "talker" "list shows it"
+run_dua "${fix}" "${repo}" bg start talker -- something
+assert_rc "${RC}" 1 "starting it twice is refused"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" bg stop talker
+assert_contains "$(calls "${fix}")" "kill -INT" "stop sends SIGINT first"
+assert_not_contains "$(calls "${fix}")" "kill -KILL" "and does not escalate when it works"
+
+scenario "setup passthrough"
+fix="$(new_fixture)"
+repo="${TMP}/setup"
+make_repo "${repo}" setup x86-cudev
+cat >"${repo}/bin/dua_setup.sh" <<'EOS'
+#!/usr/bin/env bash
+echo "dua_setup.sh called with: $*"
+echo "cwd: $(pwd)"
+EOS
+chmod +x "${repo}/bin/dua_setup.sh"
+add_container "${fix}" 555555555555 "devcontainer-setup-x86-cudev-1" \
+  "setup:x86-cudev" running "setup-x86-cudev" "devcontainer" "" "${repo}"
+run_dua "${fix}" "${repo}/src" setup modify -a some_unit x86-cudev
+assert_rc "${RC}" 0 "setup succeeds"
+assert_contains "${OUT}" "called with: modify -a some_unit x86-cudev" "passes the arguments through"
+assert_contains "${OUT}" "cwd: ${repo}" "runs from the repository root"
+assert_contains "${OUT}" "must be rebuilt" "warns about the rebuild"
+assert_contains "${OUT}" "not recursive" "reminds about unit inclusion"
+run_dua "${fix}" "${repo}" setup
+assert_rc "${RC}" 2 "setup with no arguments is refused"
+
+scenario "pkg new"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" pkg new my_node --deps "rclcpp std_msgs" --node my_node_exec
+log="$(calls "${fix}")"
+assert_contains "${log}" "ros2 pkg create --package-format 3" "uses the template invocation"
+assert_contains "${log}" "--destination-directory src --build-type ament_cmake" "defaults to a cmake package"
+assert_contains "${log}" "--dependencies rclcpp std_msgs" "passes dependencies"
+assert_contains "${log}" "--node-name my_node_exec" "passes the node name"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" pkg new py_pkg --python
+assert_contains "$(calls "${fix}")" "--build-type ament_python" "--python switches the build type"
+
+scenario "resolution cache"
+fix="$(new_fixture)"
+repo="${TMP}/cache"
+make_repo "${repo}" cache x86-cudev
+add_container "${fix}" 666666666666 "devcontainer-cache-x86-cudev-1" \
+  "cache:x86-cudev" running "cache-x86-cudev" "devcontainer" "" "${repo}"
+run_dua "${fix}" "${repo}" exec -- true
+if compgen -G "${fix}/state/repos/*.cid" >/dev/null; then ok "remembers the container id"; else no "remembers the container id"; fi
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" exec -- true
+log="$(calls "${fix}")"
+assert_not_contains "${log}" "ps -aq" "a cache hit skips the full scan"
+assert_contains "${log}" "inspect 666666666666" "and revalidates the cached id"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" --trace exec -- true
+assert_contains "${OUT}" "resolved from cache" "--trace says so"
+# a stopped container must not be served from the cache
+sed -i 's/^STATE\trunning/STATE\texited/' "${fix}/containers/666666666666.rec"
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" exec -- true
+assert_contains "$(calls "${fix}")" "ps -aq" "a stopped cached container falls back to a scan"
+assert_contains "${OUT}" "dua up" "and reports it correctly"
+sed -i 's/^STATE\texited/STATE\trunning/' "${fix}/containers/666666666666.rec"
+# ctx must never use the cache, so anomalies stay visible
+: >"${fix}/calls.log"
+run_dua "${fix}" "${repo}" ctx
+assert_contains "$(calls "${fix}")" "ps -aq" "ctx always scans"
 
 scenario "doctor"
 fix="$(new_fixture)"

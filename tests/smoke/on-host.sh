@@ -19,7 +19,15 @@ set -uo pipefail
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DUA="$(cd -P "${HERE}/../../plugins/dua-claude/bin" && pwd)/dua"
 CYCLE=1
-[[ "${1-}" == "-n" ]] && CYCLE=0
+BUILD=0
+while [[ $# -gt 0 ]]; do
+  case "${1}" in
+  -n) CYCLE=0 ;;
+  -b) BUILD=1 ;;
+  *) printf 'usage: on-host.sh [-n] [-b]\n  -n  skip the container stop/start cycle\n  -b  run a real full build (slow)\n' >&2; exit 2 ;;
+  esac
+  shift
+done
 
 PASS=0
 FAIL=0
@@ -49,7 +57,8 @@ check() { # check <label> <expected substring> <command...>
 }
 
 main() {
-  printf 'dua-claude Phase 1 smoke test\ndate: %s\ncwd:  %s\n' "$(date -Is)" "$(pwd -P)"
+  local root rc
+  printf 'dua-claude Phase 1+2 smoke test\ndate: %s\ncwd:  %s\n' "$(date -Is)" "$(pwd -P)"
 
   sec "ctx"
   "${DUA}" ctx || no "ctx exits 0" "see above"
@@ -129,7 +138,7 @@ main() {
   if [[ "${a}" == "${b}" ]]; then ok "snap and ic function sets match"; else no "snap and ic function sets match"; fi
 
   sec "workspace identity"
-  local root probe
+  local probe
   root="$("${DUA}" ctx --json | sed -n 's/.*"repo_root": "\([^"]*\)".*/\1/p')"
   probe="logs/.dua-smoke-$$"
   "${DUA}" exec -- "echo probe > /home/neo/workspace/${probe}" >/dev/null 2>&1
@@ -149,6 +158,70 @@ main() {
   check "touching commands.sh invalidates it" "stale" "${DUA}" ctx
   "${DUA}" exec -- true >/dev/null 2>&1
   check "the next exec refreshes it" "fresh" "${DUA}" ctx
+
+  sec "resolution cache"
+  printf '  with cache:\n'
+  DUA_TIME=1 "${DUA}" exec -- true 2>&1 >/dev/null | sed 's/^/    /'
+  printf '  without cache:\n'
+  DUA_NO_CACHE=1 DUA_TIME=1 "${DUA}" exec -- true 2>&1 >/dev/null | sed 's/^/    /'
+
+  sec "build and test plumbing"
+  printf '  default build output size: %s lines\n' \
+    "$("${DUA}" build --all __no_such_package_here__ 2>&1 | wc -l)"
+  check "build runs and reports a summary" "Summary:" \
+    "${DUA}" build --all __no_such_package_here__
+  check "colcon warns about the unknown package" "ignoring unknown package" \
+    "${DUA}" build --all __no_such_package_here__
+  local blog
+  blog="$(ls -t "${root}"/logs/cc/*-build.log 2>/dev/null | head -1)"
+  if [[ -n "${blog}" ]]; then ok "build wrote ${blog##*/}"; else no "build wrote a log"; fi
+  if [[ ${BUILD} -eq 1 ]]; then
+    sec "real build"
+    if "${DUA}" build --all; then ok "full workspace build"; else no "full workspace build"; fi
+    check "snapshot invalidated by the build" "stale" "${DUA}" ctx
+  else
+    printf '\n(skipping the real build, pass -b to run it)\n'
+  fi
+
+  sec "run under a deadline"
+  local t4 t5
+  t4="$(date +%s%N)"
+  "${DUA}" run --for 3s -- 'echo started; sleep 30' >/dev/null 2>&1
+  rc=$?
+  t5="$(date +%s%N)"
+  if [[ ${rc} -eq 0 && $(((t5 - t4) / 1000000)) -lt 8000 ]]; then
+    ok "run returns at the deadline ($(((t5 - t4) / 1000000)) ms)"
+  else
+    no "run returns at the deadline" "rc=${rc}, $(((t5 - t4) / 1000000)) ms"
+  fi
+
+  sec "background processes"
+  "${DUA}" bg stop smoke >/dev/null 2>&1 || true
+  if "${DUA}" bg start smoke -- 'for i in $(seq 1 100); do echo tick $i; sleep 1; done' >/dev/null 2>&1; then
+    ok "bg start"
+  else
+    no "bg start"
+  fi
+  sleep 2
+  check "bg status reports it running" "running" "${DUA}" bg status smoke
+  check "bg logs are readable from the host" "tick" "${DUA}" bg logs smoke -n 5
+  check "bg list shows it" "smoke" "${DUA}" bg list
+  # two processes at once: the list loop must not lose entries to stdin theft
+  "${DUA}" bg start smoke2 -- 'sleep 60' >/dev/null 2>&1
+  sleep 1
+  out="$("${DUA}" bg list 2>&1)"
+  if [[ "${out}" == *smoke* && "${out}" == *smoke2* ]]; then
+    ok "bg list shows every process"
+  else
+    no "bg list shows every process" "got: ${out}"
+  fi
+  "${DUA}" bg stop smoke2 >/dev/null 2>&1 || true
+  if "${DUA}" bg stop smoke >/dev/null 2>&1; then ok "bg stop"; else no "bg stop"; fi
+  sleep 1
+  if "${DUA}" bg status smoke >/dev/null 2>&1; then no "bg status reports it stopped"; else ok "bg status reports it stopped"; fi
+  check "the environment reached the background process" "jazzy" \
+    bash -c "'${DUA}' bg start envchk -- 'echo DISTRO=\$ROS_DISTRO; sleep 5' >/dev/null 2>&1; sleep 2; '${DUA}' bg logs envchk -n 5"
+  "${DUA}" bg stop envchk >/dev/null 2>&1 || true
 
   if [[ ${CYCLE} -eq 1 ]]; then
     sec "lifecycle"

@@ -73,6 +73,35 @@ image)
 exec)
   # Emit canned stdout for the few informational execs, otherwise nothing.
   case "$*" in
+  *"cat > /tmp/dua-cc/bg/"*)
+    # staging a background script: keep it so tests can inspect it
+    name="$(sed -n 's:.*bg/\([A-Za-z0-9_-]*\)\.sh.*:\1:p' <<<"$*")"
+    mkdir -p "${FIX}/bg"
+    cat >"${FIX}/bg/${name}.sh"
+    exit 0
+    ;;
+  *"setsid bash /tmp/dua-cc/bg/"*)
+    name="$(sed -n 's:.*bg/\([A-Za-z0-9_-]*\)\.sh.*:\1:p' <<<"$*")"
+    mkdir -p "${FIX}/bg"
+    echo "4242" >"${FIX}/bg/${name}.pid"
+    exit 0
+    ;;
+  *"cat /tmp/dua-cc/bg/"*)
+    name="$(sed -n 's:.*bg/\([A-Za-z0-9_-]*\)\.pid.*:\1:p' <<<"$*")"
+    cat "${FIX}/bg/${name}.pid" 2>/dev/null || exit 1
+    ;;
+  *"kill -0 "*)
+    # liveness is modelled by the presence of a pidfile, which the signal
+    # branch below removes
+    [[ -n "${DUA_STUB_BG_DEAD-}" ]] && exit 0
+    compgen -G "${FIX}/bg/*.pid" >/dev/null && echo yes
+    ;;
+  *"kill -INT"*)
+    rm -f "${FIX}"/bg/*.pid
+    ;;
+  *"ls /tmp/dua-cc/bg/"*)
+    ls "${FIX}"/bg/*.pid 2>/dev/null | sed "s:${FIX}/bg:/tmp/dua-cc/bg:" || exit 1
+    ;;
   *expand_aliases* | *'eval "$DUA_CMD"'*)
     # a real command payload, not one of the informational probes
     printf '%s' "${DUA_STUB_EXEC_OUT-}"

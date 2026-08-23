@@ -45,6 +45,8 @@ source "${DUA_LIB}/resolve.sh"
 source "${DUA_LIB}/exec.sh"
 # shellcheck source=lib/compose.sh
 source "${DUA_LIB}/compose.sh"
+# shellcheck source=lib/workflows.sh
+source "${DUA_LIB}/workflows.sh"
 
 usage() {
   cat >&2 <<'EOF'
@@ -57,13 +59,22 @@ Usage:
     dua down                               stop it
     dua restart                            restart it
 
+    dua build [PKG...] [--all] [--up-to] [--debug] [--clean] [-v] [--keep-going]
+    dua test  [PKG...] [--all] [--up-to] [-v]
+    dua run --for D -- COMMAND...          run under a deadline, logged
+    dua bg start NAME -- COMMAND...        run detached, logged
+    dua bg list | status NAME | logs NAME [-n N] | stop NAME
+    dua setup create|modify|clear|delete ...   guarded ./bin/dua_setup.sh
+    dua pkg new NAME [--python] [--deps "a b"] [--node N] [--library L]
+
 Options:
     --target T        act on target T (default: the one that is running)
     --timeout D       give the command a deadline (e.g. 30s, 5m); 124 on expiry
+    --for D           alias of --timeout, reads better for dua run
     --mode M          exec mode: snap (default), ic, raw
     --domain N        set ROS_DOMAIN_ID for this command
     --json            machine-readable output, where supported
-    --debug           trace resolution on stderr
+    --trace           trace resolution on stderr
     --time            report per-phase timings on stderr
     -h, --help        this text
 
@@ -71,6 +82,14 @@ Exec modes:
     snap  non-interactive shell + cached environment snapshot (~30 ms)
     ic    interactive shell, the reference environment (~400 ms)
     raw   plain shell, no DUA environment
+
+build and test run at the workspace root and print colcon's default output:
+package start/end lines, stderr as it happens, and a summary. -v adds
+console_direct+, the full stream a human sees. Either way the whole stream is
+tee'd to logs/cc/, and per-package detail stays in log/latest_build/.
+
+ Inside src/, the packages found below
+the current directory are selected automatically; --all builds everything.
 
 Run it from anywhere inside a DUA project; nested units resolve to the
 container of the macro-project that owns them.
@@ -84,6 +103,7 @@ EOF
 OPT_TARGET=""
 OPT_TIMEOUT=""
 OPT_JSON=0
+OPT_PASSTHROUGH=0   # subcommands that own their flags collect them in REST
 CMD=""
 declare -a REST=()
 
@@ -98,11 +118,11 @@ parse_globals() {
       OPT_TARGET="${1#*=}"
       shift
       ;;
-    --timeout)
+    --timeout | --for)
       OPT_TIMEOUT="${2-}"
       shift 2
       ;;
-    --timeout=*)
+    --timeout=* | --for=*)
       OPT_TIMEOUT="${1#*=}"
       shift
       ;;
@@ -132,7 +152,7 @@ parse_globals() {
       OPT_JSON=1
       shift
       ;;
-    --debug)
+    --trace)
       # shellcheck disable=SC2034  # read by dbg() in lib/common.sh
       DUA_DEBUG=1
       shift
@@ -151,9 +171,14 @@ parse_globals() {
       return 0
       ;;
     -*)
-      err "unknown option: ${1}"
-      usage
-      exit 2
+      if [[ ${OPT_PASSTHROUGH} -eq 1 ]]; then
+        REST+=("${1}")
+        shift
+      else
+        err "unknown option: ${1}"
+        usage
+        exit 2
+      fi
       ;;
     *)
       REST+=("${1}")
@@ -398,6 +423,37 @@ cmd_doctor() {
   return 1
 }
 
+# Resolve a running container or explain why there is not one, exiting on
+# failure. Uses the cached hot path.
+require_container() {
+  local rc=0
+  resolve_container_cached "${OPT_TARGET}" || rc=$?
+  case ${rc} in
+  0) return 0 ;;
+  3)
+    err "the container for this project is stopped: ${DUA_CNAME} (${DUA_CID:0:12})"
+    hint "dua up"
+    ;;
+  4)
+    err "no container is running for ${DUA_REPO_ROOT} (the image is built)"
+    hint "dua up"
+    ;;
+  5)
+    err "no container and no image for ${DUA_REPO_ROOT}"
+    hint "building the image is a human decision; ask before doing it"
+    ;;
+  6)
+    err "several containers are bound to ${DUA_REPO_ROOT}, refusing to guess"
+    print_candidates
+    ;;
+  *)
+    err "container resolution failed unexpectedly (code ${rc})"
+    hint "dua doctor"
+    ;;
+  esac
+  exit 1
+}
+
 # ---------------------------------------------------------------------------
 # exec
 # ---------------------------------------------------------------------------
@@ -421,7 +477,7 @@ cmd_exec() {
 
   local rc=0 t0 t1 t2
   t0="$(now_ms)"
-  resolve_container "${OPT_TARGET}" || rc=$?
+  resolve_container_cached "${OPT_TARGET}" || rc=$?
   t1="$(now_ms)"
   case ${rc} in
   0) ;;
@@ -471,6 +527,108 @@ cmd_exec() {
 }
 
 # ---------------------------------------------------------------------------
+# Workflows
+# ---------------------------------------------------------------------------
+
+# Join the remaining arguments into a command string: one argument is taken as
+# a shell command, several are quoted into a command line.
+rest_as_command() {
+  if [[ ${#REST[@]} -eq 1 ]]; then
+    printf '%s' "${REST[0]}"
+  else
+    shquote_join "${REST[@]}"
+  fi
+}
+
+cmd_build() {
+  need_repo
+  require_container
+  dua_build "${REST[@]+"${REST[@]}"}"
+}
+
+cmd_test() {
+  need_repo
+  require_container
+  dua_test "${REST[@]+"${REST[@]}"}"
+}
+
+cmd_run() {
+  need_repo
+  if [[ ${#REST[@]} -eq 0 ]]; then
+    err "nothing to run"
+    hint "dua run --for 20s -- ros2 launch pkg file.launch.py"
+    exit 2
+  fi
+  require_container
+  dua_run "${OPT_TIMEOUT}" "$(rest_as_command)"
+}
+
+cmd_bg() {
+  need_repo
+  if [[ ${#REST[@]} -eq 0 ]]; then
+    err "usage: dua bg start NAME -- COMMAND... | list | status NAME | logs NAME [-n N] | stop NAME"
+    exit 2
+  fi
+  local action="${REST[0]}" name="${REST[1]-}"
+  REST=("${REST[@]:2}")
+  require_container
+  case "${action}" in
+  start)
+    [[ -n "${name}" ]] || {
+      err "dua bg start needs a name"
+      exit 2
+    }
+    if [[ ${#REST[@]} -eq 0 ]]; then
+      err "dua bg start ${name} needs a command"
+      exit 2
+    fi
+    dua_bg_start "${name}" "$(rest_as_command)"
+    ;;
+  list) dua_bg_list ;;
+  status) dua_bg_status "${name}" ;;
+  logs)
+    [[ -n "${name}" ]] || {
+      err "dua bg logs needs a name"
+      exit 2
+    }
+    local n=40 i=0
+    while [[ ${i} -lt ${#REST[@]} ]]; do
+      [[ "${REST[${i}]}" == "-n" ]] && n="${REST[$((i + 1))]-40}"
+      i=$((i + 1))
+    done
+    dua_bg_logs "${name}" "${n}"
+    ;;
+  stop)
+    [[ -n "${name}" ]] || {
+      err "dua bg stop needs a name"
+      exit 2
+    }
+    dua_bg_stop "${name}"
+    ;;
+  *)
+    err "unknown bg action: ${action}"
+    exit 2
+    ;;
+  esac
+}
+
+cmd_setup() {
+  need_repo
+  dua_setup "${REST[@]+"${REST[@]}"}"
+}
+
+cmd_pkg() {
+  need_repo
+  if [[ "${REST[0]-}" != "new" ]]; then
+    err "usage: dua pkg new NAME [--python] [--deps \"a b\"] [--node N] [--library L]"
+    exit 2
+  fi
+  REST=("${REST[@]:1}")
+  require_container
+  dua_pkg_new "${REST[@]+"${REST[@]}"}"
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -489,11 +647,11 @@ main() {
       usage
       exit 0
       ;;
-    --target | --timeout | --mode | --domain)
+    --target | --timeout | --for | --mode | --domain)
       pre+=("${1}" "${2-}")
       shift 2
       ;;
-    --json | --debug | --raw | --time | --*=*)
+    --json | --trace | --raw | --time | --*=*)
       pre+=("${1}")
       shift
       ;;
@@ -513,7 +671,7 @@ main() {
   shift
   set -- "${pre[@]+"${pre[@]}"}" "$@"
   case "${CMD}" in
-  ctx | doctor | exec | up | down | restart) ;;
+  ctx | doctor | exec | up | down | restart | build | test | run | bg | setup | pkg) ;;
   -h | --help | help)
     usage
     exit 0
@@ -524,12 +682,21 @@ main() {
     exit 2
     ;;
   esac
+  case "${CMD}" in
+  build | test | bg | setup | pkg) OPT_PASSTHROUGH=1 ;;
+  esac
   parse_globals "$@"
 
   case "${CMD}" in
   ctx) cmd_ctx ;;
   doctor) cmd_doctor ;;
   exec) cmd_exec ;;
+  build) cmd_build ;;
+  test) cmd_test ;;
+  run) cmd_run ;;
+  bg) cmd_bg ;;
+  setup) cmd_setup ;;
+  pkg) cmd_pkg ;;
   up)
     need_repo
     dua_up "${OPT_TARGET}"

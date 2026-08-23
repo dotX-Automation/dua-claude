@@ -132,15 +132,11 @@ image_exists() { dk image inspect "${1}" >/dev/null 2>&1; }
 # Containers
 # ---------------------------------------------------------------------------
 
-# Emit one "<id>|<name>|<image>|<state>|<started>|<service>|<project>|<dcfolder>|<wssrc>"
-# line per existing container, running or not.
-list_containers() {
-  local ids
-  ids="$(dk ps -aq 2>/dev/null)" || return 0
-  [[ -z "${ids}" ]] && return 0
-  # shellcheck disable=SC2086
-  dk inspect ${ids} --format "${DUA_INSPECT_FMT}" 2>/dev/null |
-    awk -F'\t' '
+# Turn the inspect output on stdin into one
+# "<id>|<name>|<image>|<state>|<started>|<service>|<project>|<dcfolder>|<wssrc>"
+# line per container.
+parse_records() {
+  awk -F'\t' '
       /^DUA_REC_BEGIN$/ { id=nm=im=st=sa=sv=pj=dc=ws=""; next }
       /^DUA_REC_END$/   { print id"|"nm"|"im"|"st"|"sa"|"sv"|"pj"|"dc"|"ws; next }
       $1=="ID"       { id=$2 }
@@ -153,6 +149,20 @@ list_containers() {
       $1=="DCFOLDER" { dc=$2 }
       $1=="WSSRC"    { ws=$2 }
     '
+}
+
+# Emit a record line per existing container, running or not.
+list_containers() {
+  local ids
+  ids="$(dk ps -aq 2>/dev/null)" || return 0
+  [[ -z "${ids}" ]] && return 0
+  # shellcheck disable=SC2086
+  dk inspect ${ids} --format "${DUA_INSPECT_FMT}" 2>/dev/null | parse_records
+}
+
+# Emit the record for a single container, or nothing.
+inspect_one() {
+  dk inspect "${1}" --format "${DUA_INSPECT_FMT}" 2>/dev/null | parse_records
 }
 
 _set_container_from_record() {
@@ -312,4 +322,46 @@ infer_target() {
     return 0
   fi
   return 1
+}
+
+# Hot-path resolution.
+#
+# A full scan costs about 35 ms and grows with the number of containers on the
+# host, so commands that run often reuse the container id remembered for this
+# repository, revalidated with a single inspect: it must still exist, still be
+# running, and still mount one of the current ancestors at the workspace path.
+# Anything else falls back to the full scan.
+#
+# Only exec-like commands use this. ctx, doctor and the lifecycle commands
+# always scan, so that two containers bound to one repository are still caught.
+resolve_container_cached() {
+  local want="${1-}" cid rec ws state anc
+  if [[ -z "${DUA_NO_CACHE-}" && -z "${want}" ]]; then
+    cid="$(state_get "${DUA_REPO_ROOT}" cid)"
+    if [[ -n "${cid}" ]]; then
+      rec="$(inspect_one "${cid}")"
+      if [[ -n "${rec}" ]]; then
+        state="$(cut -d'|' -f4 <<<"${rec}")"
+        ws="$(denull "$(cut -d'|' -f9 <<<"${rec}")")"
+        if [[ "${state}" == "running" && -n "${ws}" ]]; then
+          for anc in "${DUA_ANCESTORS[@]}"; do
+            if [[ "${ws}" == "${anc}" ]]; then
+              _set_container_from_record "${rec}"
+              # shellcheck disable=SC2034
+              DUA_STRATEGY="cache"
+              dbg "resolved from cache: ${DUA_CNAME}"
+              return 0
+            fi
+          done
+        fi
+      fi
+      dbg "cache miss for ${cid}"
+    fi
+  fi
+  local rc=0
+  resolve_container "${want}" || rc=$?
+  if [[ ${rc} -eq 0 ]]; then
+    state_set "${DUA_REPO_ROOT}" cid "${DUA_CID}"
+  fi
+  return ${rc}
 }
