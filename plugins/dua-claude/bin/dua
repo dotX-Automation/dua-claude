@@ -1,0 +1,548 @@
+#!/usr/bin/env bash
+
+# dua - drive a DUA project from the host.
+#
+# Claude Code, and humans who want it, edit files on the host and execute
+# builds, tests and ROS 2 nodes inside the project's DUA container. The repo
+# root is bind-mounted at /home/neo/workspace, so both views are the same
+# filesystem.
+#
+# Copyright 2026 dotX Automation s.r.l.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -o errexit
+set -o nounset
+set -o pipefail
+if [[ "${TRACE-0}" == "1" ]]; then set -o xtrace; fi
+
+# Locate the library directory, whether installed as a plugin or run from a
+# checkout, following symlinks.
+_self="${BASH_SOURCE[0]}"
+while [[ -L "${_self}" ]]; do
+  _dir="$(cd -P "$(dirname "${_self}")" && pwd)"
+  _self="$(readlink "${_self}")"
+  [[ "${_self}" != /* ]] && _self="${_dir}/${_self}"
+done
+DUA_LIB="$(cd -P "$(dirname "${_self}")/../lib" && pwd)"
+readonly DUA_LIB
+
+# shellcheck source=lib/common.sh
+source "${DUA_LIB}/common.sh"
+# shellcheck source=lib/resolve.sh
+source "${DUA_LIB}/resolve.sh"
+# shellcheck source=lib/exec.sh
+source "${DUA_LIB}/exec.sh"
+# shellcheck source=lib/compose.sh
+source "${DUA_LIB}/compose.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+    dua ctx [--json]                       show the resolved project context
+    dua doctor                             check the host, repo and container
+    dua exec [OPTS] -- COMMAND...          run a command inside the container
+    dua exec [OPTS] "COMMAND STRING"       same, as a single shell string
+    dua up [--target T]                    start the project container
+    dua down                               stop it
+    dua restart                            restart it
+
+Options:
+    --target T        act on target T (default: the one that is running)
+    --timeout D       give the command a deadline (e.g. 30s, 5m); 124 on expiry
+    --mode M          exec mode: snap (default), ic, raw
+    --domain N        set ROS_DOMAIN_ID for this command
+    --json            machine-readable output, where supported
+    --debug           trace resolution on stderr
+    --time            report per-phase timings on stderr
+    -h, --help        this text
+
+Exec modes:
+    snap  non-interactive shell + cached environment snapshot (~30 ms)
+    ic    interactive shell, the reference environment (~400 ms)
+    raw   plain shell, no DUA environment
+
+Run it from anywhere inside a DUA project; nested units resolve to the
+container of the macro-project that owns them.
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Global option parsing
+# ---------------------------------------------------------------------------
+
+OPT_TARGET=""
+OPT_TIMEOUT=""
+OPT_JSON=0
+CMD=""
+declare -a REST=()
+
+parse_globals() {
+  while [[ $# -gt 0 ]]; do
+    case "${1}" in
+    --target)
+      OPT_TARGET="${2-}"
+      shift 2
+      ;;
+    --target=*)
+      OPT_TARGET="${1#*=}"
+      shift
+      ;;
+    --timeout)
+      OPT_TIMEOUT="${2-}"
+      shift 2
+      ;;
+    --timeout=*)
+      OPT_TIMEOUT="${1#*=}"
+      shift
+      ;;
+    --mode)
+      DUA_EXEC_MODE="${2-}"
+      shift 2
+      ;;
+    --mode=*)
+      DUA_EXEC_MODE="${1#*=}"
+      shift
+      ;;
+    --raw)
+      DUA_EXEC_MODE="raw"
+      shift
+      ;;
+    --domain)
+      # shellcheck disable=SC2034  # read by lib/exec.sh
+      DUA_DOMAIN_ID="${2-}"
+      shift 2
+      ;;
+    --domain=*)
+      # shellcheck disable=SC2034
+      DUA_DOMAIN_ID="${1#*=}"
+      shift
+      ;;
+    --json)
+      OPT_JSON=1
+      shift
+      ;;
+    --debug)
+      # shellcheck disable=SC2034  # read by dbg() in lib/common.sh
+      DUA_DEBUG=1
+      shift
+      ;;
+    --time)
+      DUA_TIME=1
+      shift
+      ;;
+    -h | --help | -help | help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      REST+=("$@")
+      return 0
+      ;;
+    -*)
+      err "unknown option: ${1}"
+      usage
+      exit 2
+      ;;
+    *)
+      REST+=("${1}")
+      shift
+      ;;
+    esac
+  done
+}
+
+# Resolve the repository or fail with a useful message.
+need_repo() {
+  if ! resolve_repo "${PWD}"; then
+    err "not inside a DUA project (no ancestor has both docker/ and bin/dua_setup.sh)"
+    hint "cd into a project created from dua-template"
+    exit 1
+  fi
+}
+
+repo_role() {
+  if [[ -n "${DUA_WSSRC}" && "${DUA_WSSRC}" != "${DUA_REPO_ROOT}" ]]; then
+    printf 'unit nested in %s' "${DUA_WSSRC}"
+  elif [[ -d "${DUA_REPO_ROOT}/src" ]] &&
+    [[ -n "$(find "${DUA_REPO_ROOT}/src" -mindepth 2 -maxdepth 2 -type d -name docker -print -quit 2>/dev/null)" ]]; then
+    printf 'macro-project'
+  else
+    printf 'unit'
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# ctx
+# ---------------------------------------------------------------------------
+
+cmd_ctx() {
+  need_repo
+  local rc=0
+  resolve_container "${OPT_TARGET}" || rc=$?
+
+  local state="none"
+  case ${rc} in
+  0) state="running" ;;
+  3) state="stopped" ;;
+  4) state="absent (image built)" ;;
+  5) state="absent (image not built)" ;;
+  6) state="ambiguous" ;;
+  esac
+
+  local ids="" cuid="" cgid="" snap="" ctarget=""
+  if [[ ${rc} -eq 0 ]]; then
+    ids="$(container_ids || true)"
+    cuid="${ids%% *}"
+    cgid="${ids##* }"
+    snap="$(snapshot_state || true)"
+    ctarget="$(container_target_file || true)"
+  fi
+
+  if [[ ${OPT_JSON} -eq 1 ]]; then
+    printf '{\n'
+    printf '  "repo_root": %s,\n' "$(json_str "${DUA_REPO_ROOT}")"
+    printf '  "role": %s,\n' "$(json_str "$(repo_role)")"
+    printf '  "targets": ['
+    local first=1 t
+    while read -r t; do
+      [[ -z "${t}" ]] && continue
+      if [[ ${first} -eq 0 ]]; then printf ', '; fi
+      first=0
+      printf '{"name": %s, "image": %s, "built": %s, "units": %s}' \
+        "$(json_str "${t}")" \
+        "$(json_str "$(target_image "${DUA_REPO_ROOT}" "${t}")")" \
+        "$(image_exists "$(target_image "${DUA_REPO_ROOT}" "${t}")" && echo true || echo false)" \
+        "$(json_str "$(target_units "${DUA_REPO_ROOT}" "${t}")")"
+    done < <(list_targets "${DUA_REPO_ROOT}")
+    printf '],\n'
+    printf '  "container": {"state": %s, "id": %s, "name": %s, "target": %s, "strategy": %s, "workspace_source": %s},\n' \
+      "$(json_str "${state}")" "$(json_str "${DUA_CID:0:12}")" "$(json_str "${DUA_CNAME}")" \
+      "$(json_str "${DUA_CTARGET}")" "$(json_str "${DUA_STRATEGY}")" "$(json_str "${DUA_WSSRC}")"
+    printf '  "cwd": {"host": %s, "container": %s},\n' \
+      "$(json_str "$(pwd -P)")" "$(json_str "$(container_cwd)")"
+    printf '  "ids": {"host_uid": %s, "host_gid": %s, "container_uid": %s, "container_gid": %s},\n' \
+      "$(json_str "$(id -u)")" "$(json_str "$(id -g)")" "$(json_str "${cuid}")" "$(json_str "${cgid}")"
+    printf '  "snapshot": %s,\n' "$(json_str "${snap}")"
+    printf '  "exec_mode": %s\n' "$(json_str "${DUA_EXEC_MODE}")"
+    printf '}\n'
+    return 0
+  fi
+
+  printf 'repo root      %s\n' "${DUA_REPO_ROOT}"
+  printf 'role           %s\n' "$(repo_role)"
+  printf 'targets        '
+  local t line=""
+  while read -r t; do
+    [[ -z "${t}" ]] && continue
+    if image_exists "$(target_image "${DUA_REPO_ROOT}" "${t}")"; then
+      line+="${line:+, }${t} (built)"
+    else
+      line+="${line:+, }${t}"
+    fi
+  done < <(list_targets "${DUA_REPO_ROOT}")
+  printf '%s\n' "${line:-none configured}"
+  printf 'container      %s' "${state}"
+  if [[ -n "${DUA_CID}" ]]; then printf '  %s (%s)' "${DUA_CNAME}" "${DUA_CID:0:12}"; fi
+  printf '\n'
+  if [[ -n "${DUA_CTARGET}" ]]; then printf 'target         %s\n' "${DUA_CTARGET}"; fi
+  if [[ -n "${DUA_STRATEGY}" ]]; then printf 'resolved by    %s\n' "${DUA_STRATEGY}"; fi
+  printf 'cwd            %s  ->  %s\n' "$(pwd -P)" "$(container_cwd)"
+  if [[ ${rc} -eq 0 ]]; then
+    printf 'ids            host %s:%s   neo %s:%s\n' "$(id -u)" "$(id -g)" "${cuid}" "${cgid}"
+    printf 'snapshot       %s\n' "${snap}"
+    if [[ -n "${ctarget}" && -n "${DUA_CTARGET}" && "${ctarget}" != "${DUA_CTARGET}" ]]; then
+      printf '/etc/dua/target %s (compose says %s)\n' "${ctarget}" "${DUA_CTARGET}"
+    fi
+  fi
+  if [[ ${rc} -eq 6 ]]; then
+    print_candidates
+    return 1
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+DOCTOR_BLOCKERS=0
+
+ck() { printf '  %s%-8s%s %s\n' "${C_GRN}" "[ ok ]" "${C_OFF}" "$*"; }
+cf() {
+  printf '  %s%-8s%s %s\n' "${C_RED}" "[fail]" "${C_OFF}" "$*"
+  DOCTOR_BLOCKERS=$((DOCTOR_BLOCKERS + 1))
+}
+cn() { printf '  %-8s %s\n' "[note]" "$*"; }
+
+cmd_doctor() {
+  printf 'Host\n'
+  if have "${DUA_DOCKER}"; then
+    ck "docker $(dk version --format '{{.Client.Version}}' 2>/dev/null || echo '(version unknown)')"
+  else
+    cf "docker not found in PATH"
+    printf '\n%s blocker(s)\n' "${DOCTOR_BLOCKERS}"
+    return 1
+  fi
+  if dk info >/dev/null 2>&1; then
+    ck "docker daemon reachable"
+  else
+    cf "cannot talk to the docker daemon (permissions? daemon down?)"
+  fi
+  if [[ -n "${DOCKER_HOST-}" ]]; then
+    cn "DOCKER_HOST is set to ${DOCKER_HOST}; remote hosts are not supported"
+  fi
+
+  printf 'Repository\n'
+  if ! resolve_repo "${PWD}"; then
+    cf "not inside a DUA project"
+    printf '\n%s blocker(s)\n' "${DOCTOR_BLOCKERS}"
+    return 1
+  fi
+  ck "root ${DUA_REPO_ROOT}"
+  local ntargets
+  ntargets="$(list_targets "${DUA_REPO_ROOT}" | grep -c . || true)"
+  if [[ "${ntargets}" -eq 0 ]]; then
+    cf "no target configured (docker/container-* is empty)"
+    hint "./bin/dua_setup.sh create NAME TARGET"
+  else
+    local t
+    while read -r t; do
+      [[ -z "${t}" ]] && continue
+      if image_exists "$(target_image "${DUA_REPO_ROOT}" "${t}")"; then
+        ck "target ${t}: image $(target_image "${DUA_REPO_ROOT}" "${t}") built"
+      else
+        cn "target ${t}: image not built on this host"
+      fi
+    done < <(list_targets "${DUA_REPO_ROOT}")
+  fi
+
+  printf 'Container\n'
+  local rc=0
+  resolve_container "${OPT_TARGET}" || rc=$?
+  case ${rc} in
+  0) ck "running: ${DUA_CNAME} (${DUA_CID:0:12}), target ${DUA_CTARGET}, resolved by ${DUA_STRATEGY}" ;;
+  3)
+    cn "stopped: ${DUA_CNAME} (${DUA_CID:0:12})"
+    hint "dua up"
+    ;;
+  4)
+    cn "no container, image is built"
+    hint "dua up"
+    ;;
+  5)
+    cn "no container and no image on this host"
+    hint "build it yourself: docker compose build in docker/container-<TARGET>/.devcontainer"
+    ;;
+  6)
+    cf "several containers bound to this repository"
+    print_candidates
+    ;;
+  esac
+
+  if [[ ${rc} -eq 0 ]]; then
+    local ids cuid cgid huid hgid
+    ids="$(container_ids || true)"
+    cuid="${ids%% *}"
+    cgid="${ids##* }"
+    huid="$(id -u)"
+    hgid="$(id -g)"
+    if [[ "${cuid}" == "${huid}" ]]; then
+      ck "uid host ${huid} = neo ${cuid}"
+    else
+      cn "uid host ${huid} != neo ${cuid}: files written in the container will be owned by ${cuid} on the host; set USER_UID in the compose file and rebuild to change this"
+    fi
+    if [[ "${cgid}" == "${hgid}" ]]; then
+      cn "gid host ${hgid} = neo ${cgid}"
+    else
+      local gname
+      gname="$(getent group "${cgid}" 2>/dev/null | cut -d: -f1 || true)"
+      cn "gid host ${hgid}, neo ${cgid}${gname:+ (${gname} on this host)}: group ownership of build artifacts differs, contents are unaffected"
+    fi
+    local ctarget
+    ctarget="$(container_target_file || true)"
+    if [[ -n "${ctarget}" ]]; then
+      if [[ "${ctarget}" == "${DUA_CTARGET}" ]]; then
+        ck "/etc/dua/target agrees: ${ctarget}"
+      else
+        cn "/etc/dua/target says ${ctarget}, compose says ${DUA_CTARGET}"
+      fi
+    fi
+    local ws_ok
+    ws_ok="$(dk exec -i -u "${DUA_USER}" "${DUA_CID}" sh -c "[ -d ${DUA_WS} ] && echo yes" 2>/dev/null || true)"
+    if [[ "${ws_ok}" == "yes" ]]; then
+      ck "workspace mounted: ${DUA_WSSRC} -> ${DUA_WS}"
+    else
+      cf "workspace ${DUA_WS} not present inside the container"
+    fi
+    ck "environment snapshot: $(snapshot_state)"
+  fi
+
+  printf '\n'
+  if [[ ${DOCTOR_BLOCKERS} -eq 0 ]]; then
+    printf '%sno blockers%s\n' "${C_GRN}" "${C_OFF}"
+    return 0
+  fi
+  printf '%s%s blocker(s)%s\n' "${C_RED}" "${DOCTOR_BLOCKERS}" "${C_OFF}"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# exec
+# ---------------------------------------------------------------------------
+
+cmd_exec() {
+  need_repo
+  if [[ ${#REST[@]} -eq 0 ]]; then
+    err "nothing to execute"
+    usage
+    exit 2
+  fi
+
+  # One argument is taken as a shell command string; several are joined with
+  # proper quoting into a command line.
+  local cmd
+  if [[ ${#REST[@]} -eq 1 ]]; then
+    cmd="${REST[0]}"
+  else
+    cmd="$(shquote_join "${REST[@]}")"
+  fi
+
+  local rc=0 t0 t1 t2
+  t0="$(now_ms)"
+  resolve_container "${OPT_TARGET}" || rc=$?
+  t1="$(now_ms)"
+  case ${rc} in
+  0) ;;
+  3)
+    err "the container for this project is stopped: ${DUA_CNAME} (${DUA_CID:0:12})"
+    hint "dua up"
+    exit 1
+    ;;
+  4)
+    err "no container is running for ${DUA_REPO_ROOT} (the image is built)"
+    hint "dua up"
+    exit 1
+    ;;
+  5)
+    err "no container and no image for ${DUA_REPO_ROOT}"
+    hint "building the image is a human decision; ask before doing it"
+    exit 1
+    ;;
+  6)
+    err "several containers are bound to ${DUA_REPO_ROOT}, refusing to guess"
+    print_candidates
+    exit 1
+    ;;
+  *)
+    err "container resolution failed unexpectedly (code ${rc})"
+    hint "dua doctor"
+    exit 1
+    ;;
+  esac
+
+  local ccwd
+  ccwd="$(container_cwd)"
+  dbg "exec mode=${DUA_EXEC_MODE} cwd=${ccwd} cmd=${cmd}"
+  set +o errexit
+  dua_exec_in "${ccwd}" "${OPT_TIMEOUT}" "${cmd}"
+  rc=$?
+  set -o errexit
+  t2="$(now_ms)"
+  if [[ -n "${DUA_TIME-}" ]]; then
+    printf '[dua] resolve %s ms, exec %s ms, total %s ms\n' \
+      "$((t1 - t0))" "$((t2 - t1))" "$((t2 - t0))" >&2
+  fi
+  if [[ ${rc} -eq 124 && -n "${OPT_TIMEOUT}" ]]; then
+    warn "command hit its ${OPT_TIMEOUT} deadline (exit 124)"
+  fi
+  return ${rc}
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+main() {
+  if [[ $# -eq 0 ]]; then
+    usage
+    exit 2
+  fi
+
+  # Global options are accepted before the subcommand too, so that
+  # "dua --debug exec ..." behaves like "dua exec --debug ...".
+  local -a pre=()
+  while [[ $# -gt 0 && "${1}" == -* ]]; do
+    case "${1}" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --target | --timeout | --mode | --domain)
+      pre+=("${1}" "${2-}")
+      shift 2
+      ;;
+    --json | --debug | --raw | --time | --*=*)
+      pre+=("${1}")
+      shift
+      ;;
+    *)
+      err "unknown option: ${1}"
+      usage
+      exit 2
+      ;;
+    esac
+  done
+  if [[ $# -eq 0 ]]; then
+    usage
+    exit 2
+  fi
+
+  CMD="${1}"
+  shift
+  set -- "${pre[@]+"${pre[@]}"}" "$@"
+  case "${CMD}" in
+  ctx | doctor | exec | up | down | restart) ;;
+  -h | --help | help)
+    usage
+    exit 0
+    ;;
+  *)
+    err "unknown command: ${CMD}"
+    usage
+    exit 2
+    ;;
+  esac
+  parse_globals "$@"
+
+  case "${CMD}" in
+  ctx) cmd_ctx ;;
+  doctor) cmd_doctor ;;
+  exec) cmd_exec ;;
+  up)
+    need_repo
+    dua_up "${OPT_TARGET}"
+    ;;
+  down)
+    need_repo
+    dua_down "${OPT_TARGET}"
+    ;;
+  restart)
+    need_repo
+    dua_restart "${OPT_TARGET}"
+    ;;
+  esac
+}
+
+main "$@"

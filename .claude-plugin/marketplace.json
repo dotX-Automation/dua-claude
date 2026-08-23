@@ -1,0 +1,29 @@
+{
+  "name": "dotxautomation",
+  "owner": {
+    "name": "dotX Automation s.r.l.",
+    "url": "https://github.com/dotX-Automation"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for the Distributed Unified Architecture",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "dua-claude",
+      "source": "./plugins/dua-claude",
+      "description": "Lets Claude Code develop inside DUA projects: resolves the project container, executes builds, tests and nodes in it, while editing files on the host.",
+      "author": {
+        "name": "dotX Automation s.r.l."
+      },
+      "license": "Apache-2.0",
+      "keywords": [
+        "dua",
+        "ros2",
+        "robotics",
+        "docker",
+        "devcontainer"
+      ]
+    }
+  ]
+}

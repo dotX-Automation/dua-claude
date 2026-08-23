@@ -1,0 +1,19 @@
+{
+  "name": "dua-claude",
+  "displayName": "DUA for Claude Code",
+  "description": "Develop DUA projects from the host: Claude edits files natively and executes builds, tests and ROS 2 nodes inside the project's DUA container.",
+  "author": {
+    "name": "dotX Automation s.r.l.",
+    "url": "https://github.com/dotX-Automation"
+  },
+  "homepage": "https://github.com/dotX-Automation/dua-claude",
+  "repository": "https://github.com/dotX-Automation/dua-claude",
+  "license": "Apache-2.0",
+  "keywords": [
+    "dua",
+    "ros2",
+    "robotics",
+    "docker",
+    "devcontainer"
+  ]
+}

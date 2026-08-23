@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+
+# Docker stub for offline unit tests.
+#
+# Replays canned container records captured from real DUA hosts. It understands
+# only the calls the dua CLI makes, and records every invocation in
+# $DUA_STUB_LOG so tests can assert on what was called.
+#
+# Fixture directory ($DUA_STUB_FIXTURE) layout:
+#   containers/<id>.rec   record in the format list_containers() parses,
+#                         fields separated by tabs, keys ID/NAME/IMAGE/...
+#   images                one image tag per line, those that "exist"
+#
+# Copyright 2026 dotX Automation s.r.l.
+# SPDX-License-Identifier: Apache-2.0
+
+set -uo pipefail
+
+FIX="${DUA_STUB_FIXTURE:?DUA_STUB_FIXTURE not set}"
+LOG="${DUA_STUB_LOG:-/dev/null}"
+
+printf '%s\n' "$*" >>"${LOG}"
+
+cmd="${1-}"
+shift || true
+
+case "${cmd}" in
+version)
+  echo "99.0.0-stub"
+  ;;
+info)
+  [[ -n "${DUA_STUB_NO_DAEMON-}" ]] && exit 1
+  echo "stub"
+  ;;
+compose)
+  # `docker compose version` probe, and `up -d`
+  case "${1-}" in
+  version) echo "9.9.9" ;;
+  up)
+    if [[ -n "${DUA_STUB_UP_CREATES-}" ]]; then
+      cp "${FIX}/pending/${DUA_STUB_UP_CREATES}.rec" "${FIX}/containers/" 2>/dev/null || true
+    fi
+    ;;
+  *) : ;;
+  esac
+  ;;
+ps)
+  # only `docker ps -aq` is used
+  for f in "${FIX}"/containers/*.rec; do
+    [[ -e "${f}" ]] || continue
+    basename "${f}" .rec
+  done
+  ;;
+inspect)
+  # `docker inspect <ids...> --format <template>`; the template is fixed, so the
+  # stub simply concatenates the stored records.
+  rc=1
+  for a in "$@"; do
+    [[ "${a}" == --format* ]] && break
+    if [[ -f "${FIX}/containers/${a}.rec" ]]; then
+      cat "${FIX}/containers/${a}.rec"
+      rc=0
+    fi
+  done
+  exit "${rc}"
+  ;;
+image)
+  # `docker image inspect <tag> ...`
+  tag="${2-}"
+  [[ -f "${FIX}/images" ]] && grep -qxF "${tag}" "${FIX}/images" && exit 0
+  exit 1
+  ;;
+exec)
+  # Emit canned stdout for the few informational execs, otherwise nothing.
+  case "$*" in
+  *expand_aliases* | *'eval "$DUA_CMD"'*)
+    # a real command payload, not one of the informational probes
+    printf '%s' "${DUA_STUB_EXEC_OUT-}"
+    exit "${DUA_STUB_EXEC_RC:-0}"
+    ;;
+  *"id -u; id -g"*)
+    cat "${FIX}/ids" 2>/dev/null || echo "1000
+1000"
+    ;;
+  *"cat /etc/dua/target"*) cat "${FIX}/dua_target" 2>/dev/null || true ;;
+  *"cat /tmp/dua-cc/stamp"*) cat "${FIX}/stamp" 2>/dev/null || exit 1 ;;
+  *"-d /home/neo/workspace"*) echo "yes" ;;
+  *) printf '%s' "${DUA_STUB_EXEC_OUT-}" ;;
+  esac
+  exit "${DUA_STUB_EXEC_RC:-0}"
+  ;;
+start | stop | restart)
+  id="${1-}"
+  if [[ -f "${FIX}/containers/${id}.rec" ]]; then
+    case "${cmd}" in
+    start | restart) sed -i 's/^STATE\t.*/STATE\trunning/' "${FIX}/containers/${id}.rec" ;;
+    stop) sed -i 's/^STATE\t.*/STATE\texited/' "${FIX}/containers/${id}.rec" ;;
+    esac
+    echo "${id}"
+    exit 0
+  fi
+  exit 1
+  ;;
+*)
+  exit 0
+  ;;
+esac
+exit 0
