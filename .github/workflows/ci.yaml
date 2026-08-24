@@ -30,6 +30,7 @@ jobs:
             plugins/dua-claude/lib/*.sh \
             tests/stub/docker \
             tests/unit/run.sh \
+            tests/unit/skills.sh \
             tests/smoke/on-host.sh \
             tests/fixtures/fixtures.sh \
             tests/mock/build.sh \
@@ -48,6 +49,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Validate the skills
+        run: tests/unit/skills.sh
       - name: Run the offline suite
         run: tests/unit/run.sh
 

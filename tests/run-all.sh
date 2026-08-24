@@ -48,7 +48,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     plugins/dua-claude/bin/dua plugins/dua-claude/lib/*.sh \
     tests/stub/docker tests/unit/run.sh tests/smoke/on-host.sh \
     tests/fixtures/fixtures.sh tests/mock/build.sh tests/mock/stubs/colcon \
-    tests/mock/stubs/ros2 tests/run-all.sh tests/bats/helper.bash; then
+    tests/mock/stubs/ros2 tests/run-all.sh tests/bats/helper.bash tests/unit/skills.sh; then
     echo "clean"
   else
     fail "shellcheck"
@@ -69,6 +69,9 @@ PY
 else
   fail "manifests"
 fi
+
+step "skills"
+if tests/unit/skills.sh; then :; else fail "skills"; fi
 
 step "offline suite"
 if tests/unit/run.sh; then :; else fail "offline suite"; fi
