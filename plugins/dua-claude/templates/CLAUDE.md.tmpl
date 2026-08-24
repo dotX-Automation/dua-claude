@@ -1,0 +1,31 @@
+# <PROJECT NAME>
+
+<One or two sentences: what this unit or macro-project does, and what it runs on. If it is part of a larger system, say which.>
+
+## Layout
+
+<Which packages live under `src/`, what each is for, and which are DUA units with their own containers rather than plain ROS packages. Keep it to a short list; the reader can look at the tree.>
+
+## Targets
+
+<Which targets are configured, which one is normally used on a development machine, and anything unusual about the container: extra devices, a specific middleware, hardware that must be attached.>
+
+## Building and running
+
+<Anything a newcomer would get wrong. The generic workflow is covered by the dua-* skills, so only write what is specific here: a package that must be built first, a launch file that is the usual entry point, parameters that must be set, a simulator or a bag that stands in for hardware.>
+
+## Interfaces
+
+<The topics, services, actions and parameters this project exposes or consumes, if that is not obvious from the package names. Include the message types.>
+
+## Testing
+
+<How this project is actually verified: unit tests, a bag replay, a hardware-in-the-loop procedure, or nothing yet. Say plainly if there is no automated verification.>
+
+## Conventions and gotchas
+
+<House rules that apply here: naming, namespaces, coding style beyond the linters, things that look wrong but are deliberate, and anything that has already burned someone.>
+
+## Do not
+
+<Actions that are unsafe or irreversible in this project: commanding hardware, publishing to a topic that moves something, touching a generated file, pushing a host-specific change.>

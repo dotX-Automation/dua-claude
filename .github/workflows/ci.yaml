@@ -31,6 +31,9 @@ jobs:
             tests/stub/docker \
             tests/unit/run.sh \
             tests/unit/skills.sh \
+            tests/unit/hooks.sh \
+            plugins/dua-claude/scripts/session-start.sh \
+            plugins/dua-claude/scripts/guard-host-exec.sh \
             tests/smoke/on-host.sh \
             tests/fixtures/fixtures.sh \
             tests/mock/build.sh \
@@ -43,6 +46,7 @@ jobs:
         run: |
           python3 -c 'import json; json.load(open(".claude-plugin/marketplace.json"))'
           python3 -c 'import json; json.load(open("plugins/dua-claude/.claude-plugin/plugin.json"))'
+          python3 -c 'import json; json.load(open("plugins/dua-claude/hooks/hooks.json"))'
 
   offline:
     name: offline suite
@@ -51,6 +55,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate the skills
         run: tests/unit/skills.sh
+      - name: Test the hooks and the slash commands
+        run: tests/unit/hooks.sh
       - name: Run the offline suite
         run: tests/unit/run.sh
 
