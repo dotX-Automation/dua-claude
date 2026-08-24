@@ -6,6 +6,10 @@ Until 1.0.0 the command line surface may still change between minor versions. Br
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-24
+
+Version bump for update test, no relevant changes to the plugin.
+
 ## [0.1.0] - 2026-08-24
 
 First release. The plugin lets Claude Code develop inside DUA projects from the host: it edits files with its own tools, and executes builds, tests and ROS 2 nodes inside the project's container.
