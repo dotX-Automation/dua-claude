@@ -1,0 +1,117 @@
+name: Bug report
+description: "Something in the plugin does not work: the dua command, the hooks, installation or updates"
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public and our projects are not. Before pasting anything, replace real paths, project names and package names, or run the probe with its redaction flag: `tests/probe/dua-cc-probe.sh -r`.
+
+        If Claude behaved incorrectly but the tooling worked, use the *Claude behaviour report* form instead.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where it went wrong
+      options:
+        - dua command line (ctx, doctor, exec, up, down, restart)
+        - dua workflows (build, test, run, bg, setup, pkg)
+        - container resolution (wrong container, or none found)
+        - environment inside the container (missing variables, functions, aliases)
+        - hooks (session context, or the host command guard)
+        - installation or update
+        - tests or CI
+        - something else
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: From `/plugin` in Claude Code, or the version field in plugins/dua-claude/.claude-plugin/plugin.json
+      placeholder: 0.1.2
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: One or two sentences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands, from where you ran them, in order. Say whether the working directory was the project root, a unit under src/, or somewhere else, because that changes what the CLI resolves.
+      placeholder: |
+        1. cd <project root>/src/<unit>
+        2. dua build
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Paste the output. If it is long, the relevant part plus the path of the full log under logs/cc/.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `dua doctor`
+      description: Run it from the same directory as the failing command. This answers most environment questions on its own.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Host
+      description: Distribution, Docker version, and your uid if it is not 1000
+      placeholder: "openSUSE Tumbleweed, Docker 29.4.0-ce, uid 1000"
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: Target
+      placeholder: x86-cudev
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: narrowing
+    attributes:
+      label: What you already ruled out
+      description: Optional, but each one saves a round trip.
+      options:
+        - label: It also fails with `--mode ic`, so it is not the environment snapshot
+        - label: It also fails with `DUA_NO_CACHE=1`, so it is not the resolution cache
+        - label: The container was started by VS Code (rather than by Compose or `dua up`)
+        - label: More than one DUA container was running on the host
+        - label: I looked at the full log under `logs/cc/`
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Timings from `DUA_TIME=1`, resolution trace from `--trace`, or probe output from `tests/probe/dua-cc-probe.sh -r`, if you have them.
+      render: text

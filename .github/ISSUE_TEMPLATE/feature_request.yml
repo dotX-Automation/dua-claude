@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest something the plugin should do, or do differently
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The workflow, not the solution. What do you do by hand today, or work around?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: A new dua subcommand or option, a change to a skill, a different default. A rough shape is enough.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Which part of the plugin
+      options:
+        - the dua command
+        - a skill, so Claude knows something it does not
+        - a hook
+        - a slash command
+        - the tests or CI
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How you handle it now
+      description: Including whether a plain `dua exec -- ...` already does the job. Not everything needs to become a subcommand.

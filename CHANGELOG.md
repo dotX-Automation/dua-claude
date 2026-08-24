@@ -6,6 +6,10 @@ Until 1.0.0 the command line surface may still change between minor versions. Br
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-24
+
+GitHub issue templates under [`.github/ISSUE_TEMPLATE`](.github/ISSUE_TEMPLATE).
+
 ## [0.1.1] - 2026-08-24
 
 Version bump for update test, no relevant changes to the plugin.
@@ -37,5 +41,7 @@ First release. The plugin lets Claude Code develop inside DUA projects from the 
 - `dua build --debug` passes `-DCMAKE_BUILD_TYPE=Debug`, which packages that set `CMAKE_BUILD_TYPE` unconditionally in their `CMakeLists.txt` will override.
 - The `test` invocation is provisional: test suites and fixtures are not yet set up in most units.
 
-[Unreleased]: https://github.com/dotX-Automation/dua-claude/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dotX-Automation/dua-claude/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/dotX-Automation/dua-claude/releases/tag/v0.1.2
+[0.1.1]: https://github.com/dotX-Automation/dua-claude/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dotX-Automation/dua-claude/releases/tag/v0.1.0

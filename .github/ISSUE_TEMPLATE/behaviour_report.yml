@@ -1,0 +1,91 @@
+name: Claude behaviour report
+description: "The tooling worked, but Claude did the wrong thing: ignored a rule, missed a skill, or was blocked when it should not have been"
+title: "[behaviour] "
+labels: ["behaviour"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when the `dua` command itself behaved correctly but Claude used it wrongly, did not reach for it at all, or was stopped by the guard when it should not have been. These are fixed by changing the wording of a skill or the rules in a hook, not by changing the CLI.
+
+        This repository is public. Redact project and package names in anything you paste.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of wrong
+      options:
+        - Claude ran something on the host that belongs in the container
+        - Claude did not use dua at all when it should have
+        - Claude used the wrong dua command, or the wrong options
+        - Claude did something it was supposed to ask about first (image rebuild, git, hardware)
+        - Claude asked about something it was allowed to do on its own
+        - The command guard blocked a legitimate command
+        - A skill said something wrong or misleading
+        - Claude did not seem to know the project context at the start of the session
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      placeholder: 0.1.2
+    validations:
+      required: true
+
+  - type: textarea
+    id: asked
+    attributes:
+      label: What you asked for
+      description: Your prompt, as close to verbatim as you can, since the wording is usually what decides whether a skill fires.
+    validations:
+      required: true
+
+  - type: textarea
+    id: did
+    attributes:
+      label: What Claude did
+      description: The commands it ran and the relevant part of its reasoning or reply.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: should
+    attributes:
+      label: What it should have done instead
+    validations:
+      required: true
+
+  - type: input
+    id: skill
+    attributes:
+      label: Which skill or hook covers this
+      description: If you know. dua-workspace, dua-containers, dua-build-test, dua-runtime, dua-targets, dua-integration, the session context hook, or the host command guard.
+      placeholder: dua-build-test
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often
+      options:
+        - Once
+        - Sometimes
+        - Every time I try this
+    validations:
+      required: true
+
+  - type: input
+    id: where
+    attributes:
+      label: Where the session was started
+      description: Project root, a unit under src/, or elsewhere. It changes what the session context says.
+      placeholder: project root
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Whether a CLAUDE.md was present in the project, whether the session was long enough that the context may have been compacted, and anything else that might matter.

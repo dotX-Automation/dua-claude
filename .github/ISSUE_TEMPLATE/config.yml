@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: DUA project template
+    url: https://github.com/dotX-Automation/dua-template
+    about: For anything about the repository layout, dua_setup.sh or the shell configuration files, rather than the plugin
+  - name: DUA base images
+    url: https://github.com/dotX-Automation/dua-foundation
+    about: For anything about what is inside the container images
+  - name: Claude Code documentation
+    url: https://code.claude.com/docs
+    about: For questions about Claude Code itself, plugins, skills or hooks
