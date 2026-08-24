@@ -32,6 +32,7 @@ jobs:
             tests/unit/run.sh \
             tests/unit/skills.sh \
             tests/unit/hooks.sh \
+            tests/unit/release.sh \
             plugins/dua-claude/scripts/session-start.sh \
             plugins/dua-claude/scripts/guard-host-exec.sh \
             tests/smoke/on-host.sh \
@@ -57,6 +58,8 @@ jobs:
         run: tests/unit/skills.sh
       - name: Test the hooks and the slash commands
         run: tests/unit/hooks.sh
+      - name: Check release consistency
+        run: tests/unit/release.sh
       - name: Run the offline suite
         run: tests/unit/run.sh
 
@@ -110,11 +113,9 @@ jobs:
           node-version: '22'
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
-      # --strict is off on purpose. The plugin deliberately carries no version
-      # field: without one the commit SHA is the version.
-      # The validator warns about that, and --strict turns the warning into an
-      # error. Add "version": "0.1.0" and restore --strict at the first release.
+      # The plugin carries an explicit semver version, so an install pins to a
+      # release rather than tracking master.
       - name: Validate the plugin manifest
-        run: claude plugin validate ./plugins/dua-claude
+        run: claude plugin validate ./plugins/dua-claude --strict
       - name: Validate the marketplace manifest
-        run: claude plugin validate .
+        run: claude plugin validate . --strict

@@ -48,7 +48,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     plugins/dua-claude/bin/dua plugins/dua-claude/lib/*.sh \
     tests/stub/docker tests/unit/run.sh tests/smoke/on-host.sh \
     tests/fixtures/fixtures.sh tests/mock/build.sh tests/mock/stubs/colcon \
-    tests/mock/stubs/ros2 tests/run-all.sh tests/bats/helper.bash tests/unit/skills.sh tests/unit/hooks.sh \
+    tests/mock/stubs/ros2 tests/run-all.sh tests/bats/helper.bash tests/unit/skills.sh tests/unit/hooks.sh tests/unit/release.sh \
     plugins/dua-claude/scripts/session-start.sh plugins/dua-claude/scripts/guard-host-exec.sh; then
     echo "clean"
   else
@@ -76,6 +76,9 @@ if tests/unit/skills.sh; then :; else fail "skills"; fi
 
 step "hooks and commands"
 if tests/unit/hooks.sh; then :; else fail "hooks and commands"; fi
+
+step "release consistency"
+if tests/unit/release.sh; then :; else fail "release consistency"; fi
 
 step "offline suite"
 if tests/unit/run.sh; then :; else fail "offline suite"; fi

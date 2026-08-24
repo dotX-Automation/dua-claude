@@ -17,7 +17,7 @@ dua test my_pkg              # colcon test, then the results
 
 Builds always run at the workspace root, whatever directory you are in, because that is where colcon must run.
 
-**Package build must always run from the workspace root.** Use `--all` when a change crosses multiple packages, when dependencies were touched, or when the workspace has never been built.
+**Which packages get built is inferred from where you are.** Run from inside `src/some_unit/`, `dua build` selects the packages defined at or below that directory and says which ones it picked; run from the workspace root, it selects nothing and builds everything. Use `--all` when a change crosses multiple packages, when dependencies were touched, or when the workspace has never been built.
 
 ## Reading a failure
 
