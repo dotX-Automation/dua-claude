@@ -87,7 +87,7 @@ Four layers, in increasing order of cost and fidelity. Everything up to the cont
 
 Run the lot locally with `tests/run-all.sh`, or `tests/run-all.sh -q` for everything that does not need Docker.
 
-Two GitHub Actions workflows: `ci.yaml` runs shellcheck and manifest validation, the offline suites, the container suite against a pinned `dua-template` commit, and `claude plugin validate --strict`; it is what gates merges. `nightly.yaml` rebuilds the mock against the template's current `master` and runs the container suite against it, reporting which files under `bin/dua-templates/context/` changed when something breaks. The plugin depends on details of the template that are not part of any contract, such as the interactive guard in `bashrc` and what `ros2init` sources, so that job is an early warning rather than a test.
+Two GitHub Actions workflows: `ci.yaml` runs shellcheck and manifest validation, the offline suites, the container suite against a pinned `dua-template` commit, and an advisory `claude plugin validate`; it is what gates merges. `nightly.yaml` rebuilds the mock against the template's current `master` and runs the container suite against it, reporting which files under `bin/dua-templates/context/` changed when something breaks. The plugin depends on details of the template that are not part of any contract, such as the interactive guard in `bashrc` and what `ros2init` sources, so that job is an early warning rather than a test.
 
 ## Development
 
