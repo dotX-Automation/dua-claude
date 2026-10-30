@@ -14,7 +14,7 @@ set -uo pipefail
 
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -P "${HERE}/../.." && pwd)"
-PLUGIN="${ROOT}/plugins/dua-claude"
+PLUGIN="${ROOT}"
 GUARD="${PLUGIN}/scripts/guard-host-exec.sh"
 SESSION="${PLUGIN}/scripts/session-start.sh"
 STUB_DIR="${ROOT}/tests/stub"
@@ -62,10 +62,12 @@ print(d["PreToolUse"][0].get("matcher", ""))')"
 
 while read -r cmd; do
   [[ -z "${cmd}" ]] && continue
-  if [[ "${cmd}" != '${CLAUDE_PLUGIN_ROOT}'* ]]; then
-    no "hook command is plugin relative" "${cmd}"
+  # Quoted as a whole, or an install path with a space splits into two words.
+  if [[ "${cmd}" != '"${CLAUDE_PLUGIN_ROOT}/'*'"' ]]; then
+    no "hook command is plugin relative and quoted" "${cmd}"
     continue
   fi
+  cmd="${cmd:1:${#cmd}-2}"
   path="${PLUGIN}${cmd#'${CLAUDE_PLUGIN_ROOT}'}"
   if [[ -x "${path}" ]]; then
     ok "$(basename "${path}") exists and is executable"

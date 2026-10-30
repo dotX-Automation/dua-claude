@@ -17,7 +17,7 @@
 set -uo pipefail
 
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DUA="$(cd -P "${HERE}/../../plugins/dua-claude/bin" && pwd)/dua"
+DUA="$(cd -P "${HERE}/../../bin" && pwd)/dua"
 CYCLE=1
 BUILD=0
 while [[ $# -gt 0 ]]; do

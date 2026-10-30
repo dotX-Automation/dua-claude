@@ -19,9 +19,11 @@ Docker and Git on the host, Claude Code, and a DUA project whose image has been 
 ## Install
 
 ```
-/plugin marketplace add dotX-Automation/dua-claude
-/plugin install dua-claude@dotxautomation
+/plugin marketplace add dotX-Automation/dotxautomation-claude-open
+/plugin install dua-claude@dotxautomation-claude-open
 ```
+
+The marketplace lives in [`dotX-Automation/dotxautomation-claude-open`](https://github.com/dotX-Automation/dotxautomation-claude-open); this repository holds only the plugin, at its root. Installations made from the `dotxautomation` marketplace this repository used to declare, up to 0.1.x, must be removed and reinstalled from the new one.
 
 Then add this to your own `~/.claude/settings.json`, so that Claude does not ask for approval on every call. A plugin cannot ship permission rules, so this step is per user.
 
@@ -40,7 +42,7 @@ Updates are pulled with `/plugin marketplace update`. Since the plugin declares 
 
 ## The `dua` command
 
-`dua` is on the `PATH` of Claude's Bash tool whenever the plugin is enabled, and you can put it on yours by adding `plugins/dua-claude/bin` to `PATH` from a checkout. Run it from anywhere inside a project; it walks up to find the root.
+`dua` is on the `PATH` of Claude's Bash tool whenever the plugin is enabled, and you can put it on yours by adding `bin` to `PATH` from a checkout. Run it from anywhere inside a project; it walks up to find the root.
 
 | Command | What it does |
 | --- | --- |
@@ -90,7 +92,7 @@ Two GitHub Actions workflows: `ci.yaml` runs shellcheck and manifest validation,
 ## Development
 
 ```bash
-claude --plugin-dir ./plugins/dua-claude   # load without installing
+claude --plugin-dir .                      # load without installing
 tests/run-all.sh                           # everything, including the container suite
 tests/run-all.sh -q                        # only what needs no Docker
 tests/run-all.sh -r master                 # build the mock against the template's master
@@ -98,13 +100,13 @@ bats tests/bats/exec.bats                  # one suite
 ```
 
 ```txt
-plugins/dua-claude/
-├── bin/dua                  entry point
-├── lib/                     resolution, execution, lifecycle, workflows
-├── skills/                  six skills, some with a reference.md
-├── commands/                slash commands
-├── hooks/  scripts/         hook registration and the hook programs
-└── templates/               the CLAUDE.md template
+.claude-plugin/plugin.json   the plugin manifest
+bin/dua                      entry point
+lib/                         resolution, execution, lifecycle, workflows
+skills/                      six skills, some with a reference.md
+commands/                    slash commands
+hooks/  scripts/             hook registration and the hook programs
+templates/                   the CLAUDE.md template
 tests/
 ├── unit/                    offline suites, no Docker required
 ├── stub/                    the fake docker client they run against
@@ -117,7 +119,7 @@ tests/
 
 ## Releasing
 
-The plugin uses semantic versioning. To cut a release: update `CHANGELOG.md`, bump `version` in `plugins/dua-claude/.claude-plugin/plugin.json`, run `tests/run-all.sh`, commit, tag `vX.Y.Z` and push the tag. `tests/unit/release.sh` fails if the version and the changelog disagree.
+The plugin uses semantic versioning. To cut a release: update `CHANGELOG.md`, bump `version` in `.claude-plugin/plugin.json`, run `tests/run-all.sh`, commit, tag `vX.Y.Z` and push the tag. `tests/unit/release.sh` fails if the version and the changelog disagree.
 
 Update installed instances with `/plugin marketplace update`.
 

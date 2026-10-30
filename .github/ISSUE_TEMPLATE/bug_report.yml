@@ -30,8 +30,8 @@ body:
     id: version
     attributes:
       label: Plugin version
-      description: From `/plugin` in Claude Code, or the version field in plugins/dua-claude/.claude-plugin/plugin.json
-      placeholder: 0.1.2
+      description: From `/plugin` in Claude Code, or the version field in .claude-plugin/plugin.json
+      placeholder: 0.2.0
     validations:
       required: true
 

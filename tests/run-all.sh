@@ -45,11 +45,11 @@ step "shellcheck"
 if command -v shellcheck >/dev/null 2>&1; then
   # shellcheck disable=SC2046
   if shellcheck -S warning \
-    plugins/dua-claude/bin/dua plugins/dua-claude/lib/*.sh \
+    bin/dua lib/*.sh \
     tests/stub/docker tests/unit/run.sh tests/smoke/on-host.sh \
     tests/fixtures/fixtures.sh tests/mock/build.sh tests/mock/stubs/colcon \
     tests/mock/stubs/ros2 tests/run-all.sh tests/bats/helper.bash tests/unit/skills.sh tests/unit/hooks.sh tests/unit/release.sh \
-    plugins/dua-claude/scripts/session-start.sh plugins/dua-claude/scripts/guard-host-exec.sh; then
+    scripts/session-start.sh scripts/guard-host-exec.sh; then
     echo "clean"
   else
     fail "shellcheck"
@@ -61,7 +61,7 @@ fi
 step "manifests"
 if python3 - <<'PY'; then
 import json, sys
-for p in (".claude-plugin/marketplace.json", "plugins/dua-claude/.claude-plugin/plugin.json"):
+for p in (".claude-plugin/plugin.json", "hooks/hooks.json"):
     with open(p) as f:
         json.load(f)
     print(f"{p}: ok")

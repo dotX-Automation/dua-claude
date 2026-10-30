@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-A Claude Code plugin marketplace, not a DUA project. `.claude-plugin/marketplace.json` declares the marketplace `dotxautomation` with `pluginRoot: ./plugins`; the single plugin lives in `plugins/dua-claude/`. Everything is Bash plus JSON manifests and Markdown skills: there is no compile step and no runtime dependency beyond Docker, Git and coreutils.
+A Claude Code plugin, not a DUA project, and not a marketplace: the plugin sits at the repository root (`.claude-plugin/plugin.json`, `bin/`, `lib/`, `skills/`, ...), and the marketplace that lists it, `dotxautomation-claude-open`, lives in the `dotX-Automation` repository of the same name and points at this repository by Git URL. Everything at the root ships to users' plugin caches, `tests/` included. Everything is Bash plus JSON manifests and Markdown skills: there is no compile step and no runtime dependency beyond Docker, Git and coreutils.
 
 Important distinction: the `dua-*` skills and `/dua-claude:*` commands you may see loaded in a session are *the product this repository builds*, not instructions for developing it. This repository has no DUA container of its own, and `dua ctx` run here will fail (no `docker/` and `bin/dua_setup.sh` at the root). Do not use the plugin's own workflows to work on the plugin.
 
@@ -22,7 +22,7 @@ bats tests/bats/exec.bats           # one container suite file
 bats -f 'pattern' tests/bats        # one test by name
 tests/mock/build.sh                 # build the mock DUA container (prerequisite of tests/bats)
 tests/smoke/on-host.sh              # acceptance test against a real DUA container on this machine
-claude --plugin-dir ./plugins/dua-claude   # load the plugin without installing it
+claude --plugin-dir .               # load the plugin without installing it
 ```
 
 `shellcheck -S warning` is the linter. Its file list is written out explicitly in **two** places, `tests/run-all.sh` and `.github/workflows/ci.yaml`: a new script must be added to both or it goes unlinted.
@@ -31,7 +31,7 @@ claude --plugin-dir ./plugins/dua-claude   # load the plugin without installing 
 
 ### The CLI
 
-`plugins/dua-claude/bin/dua` is a single dispatch script (option parsing, one `cmd_*` function per subcommand, `main`) that sources five libraries in order, all of which communicate through globals rather than return values:
+`bin/dua` is a single dispatch script (option parsing, one `cmd_*` function per subcommand, `main`) that sources five libraries in order, all of which communicate through globals rather than return values:
 
 - `lib/common.sh` — constants that are DUA invariants (`DUA_WS=/home/neo/workspace`, `DUA_USER=neo`), logging helpers, `dk()` wrapping `${DUA_DOCKER}` (the seam the test stub uses), per-repository state under `CLAUDE_PLUGIN_DATA`.
 - `lib/resolve.sh` — `resolve_repo()` walks up for a directory holding both `docker/` and `bin/dua_setup.sh`; `resolve_container()` finds the container that bind-mounts an ancestor of `$PWD` at the workspace path. Resolution is keyed on **bind mounts, never on names, images or Compose project names**, because VS Code renames images and every container started from a `.devcontainer` directory joins a Compose project literally called `devcontainer`. Its return codes are the CLI's error vocabulary: 0 running, 3 stopped, 4 no container but image built, 5 neither, 6 ambiguous. Every caller switches on them.
@@ -70,4 +70,4 @@ Remote Docker is deliberately unsupported: `dua exec` would work while Claude's 
 
 ## Releasing
 
-Semantic versioning. Update `CHANGELOG.md`, bump `version` in `plugins/dua-claude/.claude-plugin/plugin.json`, run `tests/run-all.sh`, commit, tag `vX.Y.Z`, push the tag. `tests/unit/release.sh` fails when the version and the changelog disagree.
+Semantic versioning. Update `CHANGELOG.md`, bump `version` in `.claude-plugin/plugin.json`, run `tests/run-all.sh`, commit, tag `vX.Y.Z`, push the tag. `tests/unit/release.sh` fails when the version and the changelog disagree.

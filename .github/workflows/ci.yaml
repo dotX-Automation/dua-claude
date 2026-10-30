@@ -26,15 +26,15 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck -S warning \
-            plugins/dua-claude/bin/dua \
-            plugins/dua-claude/lib/*.sh \
+            bin/dua \
+            lib/*.sh \
             tests/stub/docker \
             tests/unit/run.sh \
             tests/unit/skills.sh \
             tests/unit/hooks.sh \
             tests/unit/release.sh \
-            plugins/dua-claude/scripts/session-start.sh \
-            plugins/dua-claude/scripts/guard-host-exec.sh \
+            scripts/session-start.sh \
+            scripts/guard-host-exec.sh \
             tests/smoke/on-host.sh \
             tests/fixtures/fixtures.sh \
             tests/mock/build.sh \
@@ -45,9 +45,8 @@ jobs:
 
       - name: Manifests are valid JSON
         run: |
-          python3 -c 'import json; json.load(open(".claude-plugin/marketplace.json"))'
-          python3 -c 'import json; json.load(open("plugins/dua-claude/.claude-plugin/plugin.json"))'
-          python3 -c 'import json; json.load(open("plugins/dua-claude/hooks/hooks.json"))'
+          python3 -c 'import json; json.load(open(".claude-plugin/plugin.json"))'
+          python3 -c 'import json; json.load(open("hooks/hooks.json"))'
 
   offline:
     name: offline suite
@@ -116,6 +115,4 @@ jobs:
       # The plugin carries an explicit semver version, so an install pins to a
       # release rather than tracking master.
       - name: Validate the plugin manifest
-        run: claude plugin validate ./plugins/dua-claude --strict
-      - name: Validate the marketplace manifest
         run: claude plugin validate . --strict
