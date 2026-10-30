@@ -13,7 +13,7 @@
 
 REPO_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export REPO_ROOT
-export DUA="${REPO_ROOT}/plugins/dua-claude/bin/dua"
+export DUA="${REPO_ROOT}/bin/dua"
 export MOCK_IMAGE="${MOCK_IMAGE:-dua-claude-mock:latest}"
 
 # shellcheck source=../fixtures/fixtures.sh

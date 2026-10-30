@@ -6,6 +6,17 @@ Until 1.0.0 the command line surface may still change between minor versions. Br
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-30
+
+### Changed
+
+- **Breaking for installations:** this repository no longer declares a marketplace. The plugin moved from `plugins/dua-claude/` to the repository root, and is now listed by the `dotxautomation-claude-open` marketplace in [`dotX-Automation/dotxautomation-claude-open`](https://github.com/dotX-Automation/dotxautomation-claude-open). Remove an installation made from the old `dotxautomation` marketplace and install `dua-claude@dotxautomation-claude-open` instead.
+- The development `CLAUDE.md` moved to `.claude/CLAUDE.md`, since a `CLAUDE.md` at a plugin root is not loaded as context and fails `claude plugin validate --strict`.
+
+### Fixed
+
+- Hook commands quote `${CLAUDE_PLUGIN_ROOT}`, so an installation path containing a space no longer splits the command.
+
 ## [0.1.2] - 2026-08-24
 
 GitHub issue templates under [`.github/ISSUE_TEMPLATE`](.github/ISSUE_TEMPLATE).

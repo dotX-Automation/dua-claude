@@ -19,7 +19,7 @@ set -uo pipefail
 
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -P "${HERE}/../.." && pwd)"
-DUA="${ROOT}/plugins/dua-claude/bin/dua"
+DUA="${ROOT}/bin/dua"
 STUB_DIR="${ROOT}/tests/stub"
 VERBOSE=0
 [[ "${1-}" == "-v" ]] && VERBOSE=1

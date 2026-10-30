@@ -15,8 +15,8 @@ set -uo pipefail
 
 HERE="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -P "${HERE}/../.." && pwd)"
-SKILLS="${ROOT}/plugins/dua-claude/skills"
-DUA="${ROOT}/plugins/dua-claude/bin/dua"
+SKILLS="${ROOT}/skills"
+DUA="${ROOT}/bin/dua"
 
 PASS=0
 FAIL=0
